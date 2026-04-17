@@ -16,7 +16,7 @@ authors:
 version: 0.1.0
 date-released: "2026-04-17"
 license: Apache-2.0
-repository-code: "https://github.com/BrageEilertsen/CORE"
+repository-code: "https://github.com/BrageEilertsen/rankviz"
 keywords:
   - retrieval
   - RAG

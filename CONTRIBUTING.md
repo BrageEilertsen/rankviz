@@ -7,7 +7,7 @@ scope them clearly.
 ## Development setup
 
 ```bash
-git clone https://github.com/BrageEilertsen/CORE rankviz
+git clone https://github.com/BrageEilertsen/rankviz rankviz
 cd rankviz
 pip install -e ".[dev]"
 pytest

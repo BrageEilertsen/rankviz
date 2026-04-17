@@ -46,7 +46,7 @@ dev = [
 ]
 
 [project.urls]
-Repository = "https://github.com/BrageEilertsen/CORE"
+Repository = "https://github.com/BrageEilertsen/rankviz"
 
 [tool.setuptools.packages.find]
 where = ["src"]

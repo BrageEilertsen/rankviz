@@ -1,0 +1,27 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "rankviz: Retrieval-aware visualisation for dense-retrieval and RAG systems"
+abstract: >-
+  rankviz is a Python package for visualising retrieval behaviour in
+  dense-retrieval and RAG systems. Its centrepiece is CORE
+  (Cosine-Ordered Retrieval Embedding), a dimensionality-reduction
+  algorithm that preserves query-document cosine structure rather than
+  ambient embedding geometry, outperforming PCA, UMAP, and t-SNE on a
+  retrieval-preservation benchmark.
+type: software
+authors:
+  - family-names: Eilertsen
+    given-names: Brage
+    affiliation: "University of Oslo / Simula Research Laboratory"
+version: 0.1.0
+date-released: "2026-04-17"
+license: Apache-2.0
+repository-code: "https://github.com/BrageEilertsen/CORE"
+keywords:
+  - retrieval
+  - RAG
+  - visualisation
+  - dense-retrieval
+  - information-retrieval
+  - dimensionality-reduction
+  - embedding

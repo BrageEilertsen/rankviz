@@ -1,0 +1,54 @@
+# Python build artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+*.egg
+.eggs/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Installer logs
+MANIFEST
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+.python-version
+
+# Testing
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+.hypothesis/
+
+# Notebooks
+.ipynb_checkpoints/
+notebooks/*.html
+
+# macOS / editor
+.DS_Store
+**/.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Local research data — not checked into rankviz itself
+*.npz
+*.npy
+
+# Generated outputs (keep examples/ curated)
+*.html
+!examples/**/*.html
+*.log

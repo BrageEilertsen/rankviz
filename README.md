@@ -126,14 +126,25 @@ python scripts/umap_sensitivity.py
 ### What CORE projections look like
 
 A CORE fit on one adversarial RAG dataset (100 queries, 5000 shadow
-documents), with the poisoned document highlighted in red, the target
-in gold, and the optimisation trajectory as a coloured path. The same
-code produces both views — 2-D is a publication-ready PDF; 3-D is an
-interactive HTML file you can rotate in the browser.
+documents). Grey dots are corpus documents. Blue dots are queries.
+**Orange dots are the documents that actually end up in at least one
+query's top-10 retrieval set** — colour intensity shows how many
+queries retrieve each one. The poisoned document is highlighted in
+red, the target in gold, and the attacker's optimisation trajectory
+is the coloured path from green (iter 0) to red (final).
 
 | 2-D (matplotlib, for publication) | 3-D (matplotlib preview) |
 |:---:|:---:|
 | ![core 2D](examples/figures/core_2d.png) | ![core 3D](examples/figures/core_3d.png) |
+
+**Read the plot:** the orange cloud *is* the retrieval set — those
+are the documents the system returns across the query distribution.
+Most orange dots are dim, appearing in only 1-3 queries' top-10
+(specialist documents near their home queries). The red poison dot
+sits among the orange cloud, at a position where it would itself be
+orange with high intensity if drawn as a corpus document — i.e. it
+hits many queries' top-10 at once. That uniform, central reach is
+exactly the attack signature.
 
 Interactive versions (rotate, zoom, hover for exact coordinates) —
 download these files and open them in any browser:
@@ -145,6 +156,14 @@ Re-generate the examples from your own data:
 
 ```bash
 python scripts/generate_examples.py /path/to/your/trajectory.npz
+```
+
+To enable the retrieval-overlay on your own figures, pass
+`show_retrieved_top_k=10` to `plot_landscape`:
+
+```python
+fig = plot_landscape(core, highlight=poison, target=target,
+                     show_retrieved_top_k=10)
 ```
 
 ### How CORE works — the algorithm

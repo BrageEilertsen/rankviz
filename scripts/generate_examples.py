@@ -49,6 +49,7 @@ def main(npz_path: str) -> None:
         highlight_labels=["Poison"],
         backend="matplotlib",
         figsize=(7, 6),
+        show_retrieved_top_k=10,
     )
     fig.savefig(OUT_DIR / "core_2d.pdf", dpi=300, bbox_inches="tight")
     fig.savefig(OUT_DIR / "core_2d.png", dpi=300, bbox_inches="tight")
@@ -61,6 +62,7 @@ def main(npz_path: str) -> None:
         target=target,
         highlight_labels=["Poison"],
         backend="plotly",
+        show_retrieved_top_k=10,
     )
     fig.write_html(OUT_DIR / "core_2d.html")
 
@@ -78,6 +80,7 @@ def main(npz_path: str) -> None:
         target=target,
         highlight_labels=["Poison"],
         backend="plotly",
+        show_retrieved_top_k=10,
     )
     fig.write_html(OUT_DIR / "core_3d.html")
 
@@ -90,6 +93,7 @@ def main(npz_path: str) -> None:
         highlight_labels=["Poison"],
         backend="matplotlib",
         figsize=(7, 6),
+        show_retrieved_top_k=10,
     )
     fig.savefig(OUT_DIR / "core_3d.pdf", dpi=300, bbox_inches="tight")
     fig.savefig(OUT_DIR / "core_3d.png", dpi=300, bbox_inches="tight")

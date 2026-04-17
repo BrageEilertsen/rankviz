@@ -37,6 +37,7 @@ def plot_landscape(
     corpus_sample: int | None = 2000,
     show_centroid: bool = True,
     show_connections: bool = True,
+    show_retrieved_top_k: int | None = None,
     random_state: int | None = 42,
 ) -> Any:
     """Render a CORE projection.
@@ -68,6 +69,14 @@ def plot_landscape(
     show_connections : bool
         Draw dashed lines from each highlight to the query centroid
         and to the target (if given).
+    show_retrieved_top_k : int, optional
+        If set, compute each query's top-*k* corpus documents from the
+        original cosine space and colour the union of those documents
+        by retrieval frequency (heat-mapped orange), making the plot
+        self-explanatory: the orange dots are the documents the
+        retriever actually returns.  Requires the fitted CORE to have
+        ``_C_ref`` (the original corpus matrix) available, which it
+        does when fit on raw embeddings.
     random_state : int, optional
         Seed for corpus subsampling.
 
@@ -86,6 +95,7 @@ def plot_landscape(
         highlight_labels=highlight_labels,
         corpus_sample=corpus_sample,
         random_state=random_state,
+        show_retrieved_top_k=show_retrieved_top_k,
     )
 
     if backend == "matplotlib":
@@ -117,19 +127,48 @@ def _build_context(
     highlight_labels,
     corpus_sample: int | None,
     random_state: int | None,
+    show_retrieved_top_k: int | None = None,
 ) -> dict:
     """Project auxiliary points and assemble everything the backends need."""
     Q_low = core.query_embedding_
     D_low = core.corpus_embedding_
     n_components = core.n_components
 
+    # --- Retrieved-doc highlighting: compute per-query top-k from the
+    #     original cosine space, tally across all queries, and pass the
+    #     indices + counts into the context so backends can colour them.
+    retrieved_idx = None
+    retrieved_counts = None
+    if show_retrieved_top_k is not None:
+        if core._Q_ref is None or core._C_ref is None:
+            raise RuntimeError(
+                "show_retrieved_top_k requires CORE to have been fit on raw "
+                "embeddings (not precomputed similarities)."
+            )
+        sims = core._Q_ref @ core._C_ref.T           # (n_q, n_d)
+        topk = np.argsort(-sims, axis=1)[:, :show_retrieved_top_k]
+        flat = topk.ravel()
+        unique, counts = np.unique(flat, return_counts=True)
+        retrieved_idx = unique
+        retrieved_counts = counts
+
     # Subsample corpus for rendering.
     if corpus_sample is not None and D_low.shape[0] > corpus_sample:
         rng = np.random.default_rng(random_state)
-        idx = rng.choice(D_low.shape[0], size=corpus_sample, replace=False)
-        D_vis = D_low[idx]
+        sample_idx = rng.choice(D_low.shape[0], size=corpus_sample, replace=False)
+        # Ensure every retrieved doc appears in the visible set, or the plot lies.
+        if retrieved_idx is not None:
+            sample_idx = np.unique(np.concatenate([sample_idx, retrieved_idx]))
+        # Build local→global index mapping so we can colour retrieved dots.
+        D_vis = D_low[sample_idx]
+        if retrieved_idx is not None:
+            global_to_local = {g: l for l, g in enumerate(sample_idx)}
+            retrieved_local = np.array([global_to_local[g] for g in retrieved_idx], dtype=np.int64)
+        else:
+            retrieved_local = None
     else:
         D_vis = D_low
+        retrieved_local = retrieved_idx
 
     # Highlights.
     if highlight is not None:
@@ -165,6 +204,9 @@ def _build_context(
         highlight_labels=highlight_labels,
         traj_low=traj_low,
         tgt_low=tgt_low,
+        retrieved_local=retrieved_local,
+        retrieved_counts=retrieved_counts,
+        retrieved_k=show_retrieved_top_k,
     )
 
 
@@ -190,6 +232,22 @@ def _plot_matplotlib(ctx, *, figsize, show_centroid, show_connections):
 def _draw_mpl_2d(ax, ctx, show_centroid, show_connections):
     Q = ctx["Q_low"]; D = ctx["D_low"]
     ax.scatter(D[:, 0], D[:, 1], s=2, c=CORPUS_COLOUR, alpha=0.35, rasterized=True, zorder=1)
+
+    # Highlight retrieved-top-k documents by retrieval count (orange heatmap).
+    retrieved = ctx.get("retrieved_local")
+    if retrieved is not None and len(retrieved) > 0:
+        counts = ctx["retrieved_counts"]
+        k = ctx["retrieved_k"]
+        pts = D[retrieved]
+        sc = ax.scatter(
+            pts[:, 0], pts[:, 1],
+            s=18, c=counts, cmap="OrRd",
+            vmin=1, vmax=max(1, counts.max()),
+            edgecolors="white", linewidths=0.3, zorder=2,
+        )
+        ax.figure.colorbar(sc, ax=ax, shrink=0.35, pad=0.02, aspect=18,
+                           label=f"# queries where doc is in top-{k}")
+
     ax.scatter(Q[:, 0], Q[:, 1], s=12, c="#4477AA", alpha=0.7, edgecolors="none", zorder=3,
                label=f"Queries (n={Q.shape[0]})")
 
@@ -233,6 +291,21 @@ def _draw_mpl_2d(ax, ctx, show_centroid, show_connections):
 def _draw_mpl_3d(ax, ctx, show_centroid, show_connections):
     Q = ctx["Q_low"]; D = ctx["D_low"]
     ax.scatter(D[:, 0], D[:, 1], D[:, 2], s=1.5, c=CORPUS_COLOUR, alpha=0.3, rasterized=True)
+
+    retrieved = ctx.get("retrieved_local")
+    if retrieved is not None and len(retrieved) > 0:
+        counts = ctx["retrieved_counts"]
+        k = ctx["retrieved_k"]
+        pts = D[retrieved]
+        sc = ax.scatter(
+            pts[:, 0], pts[:, 1], pts[:, 2],
+            s=16, c=counts, cmap="OrRd",
+            vmin=1, vmax=max(1, counts.max()),
+            edgecolors="black", linewidths=0.2,
+        )
+        ax.figure.colorbar(sc, ax=ax, shrink=0.4, pad=0.05, aspect=20,
+                           label=f"# queries where doc is in top-{k}")
+
     ax.scatter(Q[:, 0], Q[:, 1], Q[:, 2], s=12, c="#4477AA", alpha=0.7,
                edgecolors="none", label=f"Queries (n={Q.shape[0]})")
 
@@ -291,6 +364,9 @@ def _plot_plotly(ctx, *, show_centroid, show_connections):
 
     if ctx["n_components"] == 3:
         _add_corpus_3d(fig, D)
+        if ctx.get("retrieved_local") is not None and len(ctx["retrieved_local"]) > 0:
+            _add_retrieved_3d(fig, D, ctx["retrieved_local"],
+                              ctx["retrieved_counts"], ctx["retrieved_k"])
         _add_queries_3d(fig, Q)
         if show_centroid:
             _add_centroid_3d(fig, Q.mean(axis=0))
@@ -312,6 +388,9 @@ def _plot_plotly(ctx, *, show_centroid, show_connections):
         )
     else:
         _add_corpus_2d(fig, D)
+        if ctx.get("retrieved_local") is not None and len(ctx["retrieved_local"]) > 0:
+            _add_retrieved_2d(fig, D, ctx["retrieved_local"],
+                              ctx["retrieved_counts"], ctx["retrieved_k"])
         _add_queries_2d(fig, Q)
         if show_centroid:
             _add_centroid_2d(fig, Q.mean(axis=0))
@@ -488,4 +567,40 @@ def _add_target_2d(fig, tg):
                     line=dict(width=1.5, color="black")),
         text=["Target"], textposition="top center", textfont=dict(size=12, color="#998800"),
         name="Target",
+    ))
+
+
+# --- Retrieved-top-k overlay (both backends) ---
+
+def _add_retrieved_2d(fig, D, retrieved_local, counts, k):
+    import plotly.graph_objects as go
+    pts = D[retrieved_local]
+    fig.add_trace(go.Scatter(
+        x=pts[:, 0], y=pts[:, 1], mode="markers",
+        marker=dict(
+            size=7, color=counts, colorscale="OrRd",
+            cmin=1, cmax=max(1, counts.max()),
+            line=dict(width=0.4, color="white"),
+            colorbar=dict(title=f"# queries in top-{k}", x=1.02, len=0.5),
+        ),
+        name=f"Top-{k} retrievals",
+        customdata=counts,
+        hovertemplate=f"Retrieved in top-{k} by %{{customdata}} queries<extra></extra>",
+    ))
+
+
+def _add_retrieved_3d(fig, D, retrieved_local, counts, k):
+    import plotly.graph_objects as go
+    pts = D[retrieved_local]
+    fig.add_trace(go.Scatter3d(
+        x=pts[:, 0], y=pts[:, 1], z=pts[:, 2], mode="markers",
+        marker=dict(
+            size=3.5, color=counts, colorscale="OrRd",
+            cmin=1, cmax=max(1, counts.max()),
+            line=dict(width=0.3, color="black"),
+            colorbar=dict(title=f"# queries in top-{k}", x=1.02, len=0.5),
+        ),
+        name=f"Top-{k} retrievals",
+        customdata=counts,
+        hovertemplate=f"Retrieved in top-{k} by %{{customdata}} queries<extra></extra>",
     ))

@@ -78,6 +78,7 @@ class CORE:
         self.corpus_embedding_: np.ndarray | None = None
         self.loss_history_: np.ndarray | None = None
         self._Q_ref: np.ndarray | None = None
+        self._C_ref: np.ndarray | None = None
 
     # ------------------------------------------------------------------
     # Public API
@@ -130,6 +131,7 @@ class CORE:
         self.corpus_embedding_ = D_low
         self.loss_history_ = losses
         self._Q_ref = Q
+        self._C_ref = D
         return self
 
     def transform(self, X: np.ndarray) -> np.ndarray:

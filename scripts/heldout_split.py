@@ -12,11 +12,12 @@ For each domain:
          train+corpus+test matrix (i.e. give them test access for free)
          as an upper bound — this is a handicap match that favours them.
 
-Output: examples/heldout_results.csv
+Supports both the planning corpus (default, ``trajectory.npz``) and the
+production eval corpus (``--eval-corpora-dir``).
 """
 from __future__ import annotations
 
-import csv, json, os, time, warnings
+import argparse, csv, glob, json, os, re, time, warnings
 import numpy as np
 
 warnings.filterwarnings("ignore")
@@ -24,7 +25,8 @@ warnings.filterwarnings("ignore")
 from rankviz import CORE
 
 BASE = "/Users/brageeilertsen/trajectory_data"
-OUT = os.path.join(BASE, "rankviz", "examples", "heldout_results.csv")
+OUT_DEFAULT = os.path.join(BASE, "rankviz", "examples", "heldout_results.csv")
+OUT_EVAL    = os.path.join(BASE, "rankviz", "examples", "heldout_results_eval.csv")
 
 TEST_FRAC = 0.2
 SEED = 42
@@ -76,23 +78,44 @@ def top_k_test(Q_test, C, Q_test_low, C_low, k=10):
     ]))
 
 
-def main():
-    domains = sorted(
+def _resolve_sources(eval_corpora_dir: str | None):
+    """Yield (domain_label, Q, C) pairs for every available source."""
+    if eval_corpora_dir is not None:
+        for path in sorted(glob.glob(os.path.join(eval_corpora_dir, "eval_corpus_C*.npz"))):
+            m = re.search(r"eval_corpus_(C\d+_[A-Za-z0-9]+)\.npz$", path)
+            if not m:
+                continue
+            data = np.load(path, allow_pickle=True)
+            yield (
+                m.group(1),
+                data["query_embeddings"].astype(np.float32),
+                data["doc_embeddings"].astype(np.float32),
+            )
+        return
+    doms = sorted(
         d for d in os.listdir(BASE)
         if d.startswith("C") and "_" in d and os.path.isdir(os.path.join(BASE, d))
     )
-    rng = np.random.default_rng(SEED)
-    results = []
-
-    print(f"[START] held-out split: {len(domains)} domains, test fraction {TEST_FRAC}", flush=True)
-
-    for dom in domains:
+    for dom in doms:
         npz = os.path.join(BASE, dom, "trajectory.npz")
         if not os.path.exists(npz):
             continue
         data = np.load(npz, allow_pickle=True)
-        Q = data["query_embeddings"].astype(np.float32)
-        C = data["shadow_doc_embeddings"].astype(np.float32)
+        yield (
+            dom,
+            data["query_embeddings"].astype(np.float32),
+            data["shadow_doc_embeddings"].astype(np.float32),
+        )
+
+
+def main(eval_corpora_dir: str | None, out: str):
+    rng = np.random.default_rng(SEED)
+    results = []
+
+    mode = f"eval corpora ({eval_corpora_dir})" if eval_corpora_dir else "planning (trajectory.npz)"
+    print(f"[START] held-out split: test fraction {TEST_FRAC}, source = {mode}", flush=True)
+
+    for dom, Q, C in _resolve_sources(eval_corpora_dir):
 
         n = Q.shape[0]
         perm = rng.permutation(n)
@@ -146,13 +169,14 @@ def main():
     keys = ["domain", "n_train", "n_test",
             "CORE_2D", "CORE_3D", "PCA_3D",
             "UMAP_3D_handicap", "tSNE_3D_handicap"]
-    with open(OUT, "w", newline="") as f:
+    os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
+    with open(out, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=keys)
         w.writeheader()
         for r in results:
             w.writerow({k: r.get(k) for k in keys})
 
-    print(f"\n[SAVED] {OUT}", flush=True)
+    print(f"\n[SAVED] {out}", flush=True)
     print("\n[SUMMARY — held-out top-10 overlap]", flush=True)
     arr = {k: [r[k] for r in results if r.get(k) is not None]
            for k in ["CORE_2D", "CORE_3D", "PCA_3D", "UMAP_3D_handicap", "tSNE_3D_handicap"]}
@@ -162,4 +186,9 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("--eval-corpora-dir", default=None)
+    ap.add_argument("--out", default=None)
+    args = ap.parse_args()
+    out = args.out or (OUT_EVAL if args.eval_corpora_dir else OUT_DEFAULT)
+    main(args.eval_corpora_dir, out)

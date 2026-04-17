@@ -1,22 +1,30 @@
 """UMAP hyperparameter sensitivity sweep.
 
-On two representative domains (C4_chemo, the hardest; and C2_flu, among
-the easiest), sweep n_neighbors x min_dist and report top-10 overlap.
+On two representative domains (C4_chemo, the hardest; C2_flu, among the
+easiest), sweep ``n_neighbors × min_dist`` and report top-10 overlap.
 
 The goal is to preempt the reviewer question "did you run UMAP with bad
-hyperparameters?" — either UMAP never recovers (CORE wins robustly) or
+hyperparameters?".  Either UMAP never recovers (CORE wins robustly) or
 we report UMAP's best-case number alongside CORE's.
+
+Supports both corpora:
+
+* Default (planning): reads ``C{N}/trajectory.npz``
+  (``query_embeddings`` + ``shadow_doc_embeddings``).
+* ``--eval-corpora-dir DIR``: reads ``eval_corpus_C{N}_*.npz`` from DIR
+  (``query_embeddings`` + ``doc_embeddings``).
 """
 from __future__ import annotations
 
-import csv, os, time, warnings
+import argparse, csv, glob, os, re, time, warnings
 import numpy as np
 
 warnings.filterwarnings("ignore")
 
 
 BASE = "/Users/brageeilertsen/trajectory_data"
-OUT = os.path.join(BASE, "rankviz", "examples", "umap_sensitivity.csv")
+OUT_DEFAULT = os.path.join(BASE, "rankviz", "examples", "umap_sensitivity.csv")
+OUT_EVAL    = os.path.join(BASE, "rankviz", "examples", "umap_sensitivity_eval.csv")
 
 N_NEIGHBORS = [5, 15, 30, 50]
 MIN_DISTS   = [0.0, 0.1, 0.5]
@@ -28,22 +36,52 @@ def top_k_overlap(Q, D, Q_low, D_low, k=10):
     top_hi = np.argsort(-sims, axis=1)[:, :k]
     dists = np.linalg.norm(Q_low[:, None, :] - D_low[None, :, :], axis=-1)
     top_lo = np.argsort(dists, axis=1)[:, :k]
-    return float(np.mean([len(set(top_hi[i]) & set(top_lo[i])) / k for i in range(Q.shape[0])]))
+    return float(np.mean([
+        len(set(top_hi[i]) & set(top_lo[i])) / k for i in range(Q.shape[0])
+    ]))
 
 
-def main():
+def _load(dom: str, eval_corpora_dir: str | None):
+    if eval_corpora_dir is not None:
+        # Match "eval_corpus_C4_chemo.npz" or similar.
+        matches = sorted(glob.glob(
+            os.path.join(eval_corpora_dir, f"eval_corpus_{dom}.npz")
+        ))
+        if not matches:
+            # Also handle stems like C4_chemo matching eval_corpus_C4_*.npz
+            matches = sorted(glob.glob(
+                os.path.join(eval_corpora_dir, f"eval_corpus_{dom.split('_')[0]}_*.npz")
+            ))
+        if not matches:
+            return None
+        data = np.load(matches[0], allow_pickle=True)
+        return (
+            data["query_embeddings"].astype(np.float32),
+            data["doc_embeddings"].astype(np.float32),
+        )
+    npz = os.path.join(BASE, dom, "trajectory.npz")
+    if not os.path.exists(npz):
+        return None
+    data = np.load(npz, allow_pickle=True)
+    return (
+        data["query_embeddings"].astype(np.float32),
+        data["shadow_doc_embeddings"].astype(np.float32),
+    )
+
+
+def main(eval_corpora_dir: str | None, out: str):
     from umap import UMAP
 
     rows = []
-    print(f"[START] UMAP sweep over n_neighbors x min_dist", flush=True)
+    mode = f"eval corpora ({eval_corpora_dir})" if eval_corpora_dir else "planning"
+    print(f"[START] UMAP sweep — {mode}", flush=True)
+
     for dom in DOMAINS:
-        npz = os.path.join(BASE, dom, "trajectory.npz")
-        if not os.path.exists(npz):
+        pair = _load(dom, eval_corpora_dir)
+        if pair is None:
             print(f"  [SKIP] {dom}", flush=True)
             continue
-        data = np.load(npz, allow_pickle=True)
-        Q = data["query_embeddings"].astype(np.float32)
-        D = data["shadow_doc_embeddings"].astype(np.float32)
+        Q, D = pair
         stacked = np.concatenate([Q, D], axis=0)
         print(f"\n[{dom}] Q={Q.shape[0]} D={D.shape[0]}", flush=True)
 
@@ -67,14 +105,14 @@ def main():
                 })
 
     keys = ["domain", "n_neighbors", "min_dist", "UMAP_3D_overlap", "time_s"]
-    with open(OUT, "w", newline="") as f:
+    os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
+    with open(out, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=keys)
         w.writeheader()
         for r in rows:
             w.writerow(r)
-    print(f"\n[SAVED] {OUT}", flush=True)
+    print(f"\n[SAVED] {out}", flush=True)
 
-    # Best-case summary per domain.
     print("\n[SUMMARY — best UMAP config per domain]", flush=True)
     by_dom = {}
     for r in rows:
@@ -89,4 +127,9 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("--eval-corpora-dir", default=None)
+    ap.add_argument("--out", default=None)
+    args = ap.parse_args()
+    out = args.out or (OUT_EVAL if args.eval_corpora_dir else OUT_DEFAULT)
+    main(args.eval_corpora_dir, out)

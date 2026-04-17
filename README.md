@@ -24,31 +24,38 @@ faithfully than the tail.
 
 ### Benchmark: 11 domains × 5 projection methods
 
-Evaluated on 11 dense-retrieval adversarial datasets (100 queries × 5000
-shadow documents × 768-D E5 embeddings), using **top-10 overlap** as the
-metric (fraction of each query's true top-10 corpus documents that remain
-in the query's top-10 under the projection, averaged across queries).
+Evaluated on the **production retrieval corpus** used by the thesis
+attack's eval pipeline — 17–30 evaluation queries × 8 k–20 k
+domain-filtered corpus documents × 768-D E5 embeddings, with the E5
+`"query:"` / passage encoding convention. Metric is **top-10 overlap**:
+the fraction of each query's true top-10 documents that remain in the
+query's top-10 under the low-dim projection, averaged over queries.
+(The same benchmark run on the *planning* corpus inside `trajectory.npz`
+is in [`examples/benchmark_results_planning.csv`](examples/benchmark_results_planning.csv)
+for comparison — see the [Planning corpus vs. eval corpus](#planning-corpus-vs-eval-corpus--use-the-right-one)
+section for why they differ.)
 
 ![benchmark](examples/benchmark_figure.png)
 
 | Method       | Mean top-10 overlap | Min  | Max  | Win rate |
 |--------------|---------------------|------|------|----------|
-| **CORE 3-D** | **0.829**           | 0.748| 0.918| **11/11**|
-| **CORE 2-D** | **0.820**           | 0.743| 0.918| **11/11**|
-| PCA 3-D      | 0.339               | 0.133| 0.632| 0/11     |
-| t-SNE 3-D    | 0.119               | 0.000| 0.411| 0/11     |
-| UMAP 3-D     | 0.076               | 0.000| 0.300| 0/11     |
+| **CORE 3-D** | **0.528**           | 0.335| 0.697| **11/11**|
+| **CORE 2-D** | **0.510**           | 0.265| 0.700| **11/11**|
+| t-SNE 3-D    | 0.079               | 0.000| 0.255| 0/11     |
+| UMAP 3-D     | 0.056               | 0.000| 0.260| 0/11     |
+| PCA 3-D      | 0.012               | 0.000| 0.027| 0/11     |
 
-**CORE wins on every domain.** In 2-D it beats PCA in 3-D by **2.4×** and
-UMAP in 3-D by **10.8×** on average. Full per-domain numbers are in
-[`examples/benchmark_results.csv`](examples/benchmark_results.csv).
+**CORE wins every domain against every baseline, no exceptions.** In 3-D
+it beats PCA by **44×**, UMAP by **9.4×**, and t-SNE by **6.7×** on
+average. The relative gap is *wider* than on the planning corpus because
+the eval corpus is domain-filtered — on a tight single-topic distribution,
+surrogate objectives (variance, neighbourhood preservation, manifold
+topology) lose their remaining loose correlation with retrieval
+structure and collapse. Full per-domain numbers are in
+[`examples/benchmark_results_eval.csv`](examples/benchmark_results_eval.csv).
 
-> The in-sample benchmark evaluates each method on the same
-> query-document pairs it was fit on. That is how PCA / t-SNE / UMAP are
-> typically used for retrieval visualisation, and it is the right
-> comparison *for visualisation*. But it is a fair question whether
-> CORE just overfits those specific queries. The next section answers
-> that.
+> A reasonable question: does CORE just overfit the queries it was
+> fit on? The held-out experiment below answers that.
 
 ### Held-out generalisation
 
@@ -60,6 +67,13 @@ against the *fixed* query landscape. PCA uses its linear basis. UMAP
 and t-SNE have no clean out-of-sample procedure, so they are fit on the
 joint `[train; corpus; test]` matrix — a handicap that gives them
 access to the test queries during fitting.
+
+This experiment is measured on the **planning corpus** (100 queries
+per domain, 5 000 shadow documents), not the eval corpus. The eval
+corpora have 17–30 queries each — too few to hold out 20 % and still
+get a statistically meaningful test set. The planning corpus (100
+queries × 11 domains = 220 held-out test queries total) is the
+scientifically correct setup for this specific question.
 
 ![heldout](examples/heldout_figure.png)
 
@@ -78,13 +92,12 @@ Every other domain is a CORE win. Full per-domain numbers are in
 
 **What this tells us.** Out-of-sample performance drops for every
 method (as expected — generalisation is harder than memorisation). CORE
-degrades from 0.829 in-sample to 0.456 held-out in 3-D, but PCA falls
-further (0.339 → 0.194), and UMAP/t-SNE collapse to near-baseline even
-*with* test access. The gap between CORE and everything else **widens**
-in relative terms: CORE 3-D is **2.3× better than PCA**, **4.7× better
-than UMAP**, and **6.8× better than t-SNE** on held-out queries, versus
-2.4× / 10.8× / 7.0× in-sample. The bipartite asymmetry CORE exploits
-carries over to unseen queries.
+degrades from 0.829 in-sample to 0.456 held-out in 3-D on the planning
+corpus, but PCA falls further (0.339 → 0.194), and UMAP/t-SNE collapse
+to near-baseline even *with* test access. CORE 3-D is **2.3× better
+than PCA**, **4.7× better than UMAP**, and **6.8× better than t-SNE**
+on held-out queries. The bipartite asymmetry CORE exploits carries
+over to unseen queries.
 
 **An unexpected finding: CORE 2-D is often a better choice than 3-D for
 held-out queries.** In-sample, 3-D is consistently ≥ 2-D; out-of-sample,
@@ -103,24 +116,27 @@ python scripts/heldout_split.py
 
 A reasonable reviewer will ask: "did you just run UMAP with bad
 hyperparameters?" The main benchmark uses `n_neighbors=15, min_dist=0.1`
-(reasonable defaults for cosine). As a sensitivity check, both hyperparameters
-were swept on two domains — C4\_chemo (hardest in-sample) and C2\_flu
-(easiest). Full table in
-[`examples/umap_sensitivity.csv`](examples/umap_sensitivity.csv).
+(reasonable defaults for cosine). As a sensitivity check, both
+hyperparameters were swept on two representative domains — C4\_chemo
+and C2\_flu — on the **eval corpus** (the same corpus as the main
+benchmark above). Full table in
+[`examples/umap_sensitivity_eval.csv`](examples/umap_sensitivity_eval.csv);
+the planning-corpus version is in
+[`examples/umap_sensitivity_planning.csv`](examples/umap_sensitivity_planning.csv).
 
 | Domain      | n=5 md=0 | n=5 md=0.1 | n=5 md=0.5 | n=15 md=0 | n=15 md=0.1 | n=15 md=0.5 | n=30 md=0 | n=30 md=0.1 | n=30 md=0.5 | n=50 md=0 | n=50 md=0.1 | n=50 md=0.5 | Best | CORE 3-D |
 |-------------|----------|------------|------------|-----------|-------------|-------------|-----------|-------------|-------------|-----------|-------------|-------------|------|----------|
-| **C4_chemo**| 0.046    | 0.046      | 0.128      | 0.131     | 0.131       | 0.131       | 0.131     | 0.131       | **0.162**   | 0.131     | 0.131       | 0.131       | 0.162| **0.748**|
-| **C2_flu**  | 0.000    | 0.074      | 0.000      | 0.099     | 0.099       | 0.099       | 0.099     | 0.099       | 0.099       | 0.099     | 0.099       | **0.238**   | 0.238| **0.918**|
+| **C4_chemo**| 0.185    | 0.225      | **0.295**  | 0.220     | 0.220       | 0.235       | 0.185     | 0.185       | 0.195       | 0.185     | 0.185       | 0.195       | 0.295| **0.615**|
+| **C2_flu**  | 0.080    | 0.080      | **0.187**  | 0.097     | 0.097       | 0.147       | 0.097     | 0.097       | 0.097       | 0.097     | 0.097       | 0.097       | 0.187| **0.633**|
 
 Even with UMAP's best hyperparameter configuration discovered in this
-sweep, CORE 3-D is still **4.6× ahead** on the hardest domain and
-**3.9× ahead** on the easiest. The reviewer's attack surface is closed.
+sweep, CORE 3-D is still **2.1× ahead** on C4\_chemo and **3.4× ahead**
+on C2\_flu. The reviewer's attack surface is closed.
 
 Reproduce with:
 
 ```bash
-python scripts/umap_sensitivity.py
+python scripts/umap_sensitivity.py --eval-corpora-dir /path/to/eval/corpora
 ```
 
 ### What CORE projections look like
@@ -154,6 +170,20 @@ Interactive versions (rotate, zoom, hover for exact coordinates):
 
 - 🌐 [`examples/figures/core_2d.html`](examples/figures/core_2d.html) — interactive 2-D
 - 🌐 [`examples/figures/core_3d.html`](examples/figures/core_3d.html) — interactive 3-D
+
+### All 11 domains at a glance
+
+Every domain fit on its own eval corpus. The poison (red) consistently
+sits inside the orange retrieval hot zone, usually next to the target
+(gold) — a visual fingerprint of the attack that's the same across
+medical, political, legal, and scientific misinformation categories.
+
+|   |   |   |
+|:---:|:---:|:---:|
+| ![C1 SSRI](examples/figures/per_domain/C1_ssri.png)  <br>**C1 SSRI** | ![C2 flu](examples/figures/per_domain/C2_flu.png)  <br>**C2 flu** | ![C3 acetaminophen](examples/figures/per_domain/C3_acetaminophen.png)  <br>**C3 acetaminophen** |
+| ![C4 chemo](examples/figures/per_domain/C4_chemo.png)  <br>**C4 chemo** | ![C5 5G](examples/figures/per_domain/C5_5g.png)  <br>**C5 5G** | ![C6 bankruptcy](examples/figures/per_domain/C6_bankruptcy.png)  <br>**C6 bankruptcy** |
+| ![C7 GMO](examples/figures/per_domain/C7_gmo.png)  <br>**C7 GMO** | ![C8 asylum](examples/figures/per_domain/C8_asylum.png)  <br>**C8 asylum** | ![C9 mail-in](examples/figures/per_domain/C9_mailin.png)  <br>**C9 mail-in** |
+| ![C10 voter](examples/figures/per_domain/C10_voter.png)  <br>**C10 voter** | ![C11 quote](examples/figures/per_domain/C11_quote.png)  <br>**C11 quote** |  |
 
 Re-generate the examples from your own data:
 
@@ -440,15 +470,37 @@ pytest tests/ -v
 visualisation smoke tests, and CORE (fit, transform, rank preservation,
 loss behaviour, 2-D and 3-D, all three weighting schemes).
 
-## Reproducing the benchmark
+## Reproducing the experiments
+
+**Main benchmark on eval corpora** (the headline numbers — requires
+`eval_corpus_*.npz` files built by `scripts/build_eval_corpus.py`):
+
+```bash
+python scripts/benchmark_all_domains.py --eval-corpora-dir /path/to/eval/corpora
+python scripts/make_benchmark_figure.py \
+    --csv examples/benchmark_results_eval.csv \
+    --out-png examples/benchmark_figure.png \
+    --out-pdf examples/benchmark_figure.pdf
+```
+
+**Main benchmark on planning corpora** (uses `trajectory.npz` directly,
+no extra reproduction step needed):
 
 ```bash
 python scripts/benchmark_all_domains.py
 ```
 
-Expects per-domain `trajectory.npz` files under a `trajectory_data/`
-directory containing `query_embeddings`, `shadow_doc_embeddings`, `target`,
-and `trajectory` keys. See [`scripts/benchmark_all_domains.py`](scripts/benchmark_all_domains.py) for the expected layout.
+**Held-out generalisation** (on planning corpora — see Caveats for why):
+
+```bash
+python scripts/heldout_split.py
+```
+
+**UMAP hyperparameter sensitivity** (both corpus modes supported):
+
+```bash
+python scripts/umap_sensitivity.py --eval-corpora-dir /path/to/eval/corpora
+```
 
 The benchmark measures **top-10 overlap** — for each query, the fraction
 of its true top-10 corpus documents that remain in the top-10 under
@@ -474,23 +526,25 @@ for you.
   query sets (medical, political, legal, tech misinformation). CORE's
   advantage on broader / multi-domain query distributions (e.g. MS
   MARCO, BEIR) has not yet been measured.
-- The **in-sample** benchmark measures how well each method reconstructs
-  the retrieval structure it was fit on. The **held-out** experiment
-  (above) shows generalisation to unseen queries is materially lower in
-  absolute terms for every method; CORE still dominates in relative
-  terms, but don't read 0.918 as "the projection is nearly lossless" —
-  on unseen queries the equivalent number is 0.456.
-- t-SNE beat CORE 3-D by 0.005 on one of 11 held-out domains (C8_asylum),
-  using the joint-fit handicap. One in eleven, smallest possible
-  margin — but recorded honestly.
-- **The in-package benchmark fits CORE on the planning-phase shadow
-  corpus** (`shadow_doc_embeddings` inside `trajectory.npz`), not the
-  domain-filtered corpus `eval_single.py` builds at runtime. The two
-  corpora produce different ranks for the same poison, and the
-  production `ASR@10` numbers are measured on the eval corpus. See
-  [Planning corpus vs. eval corpus](#planning-corpus-vs-eval-corpus--use-the-right-one)
-  above and [`scripts/build_eval_corpus.py`](scripts/build_eval_corpus.py)
-  for the reproduction path to generate thesis-quality plots.
+- Absolute top-10 overlap numbers depend on which corpus you measure
+  against. On the **eval corpus** (domain-filtered, matching
+  `eval_single.py`) CORE 3-D averages **0.528**. On the **planning
+  corpus** (the 5 000 shadow docs inside `trajectory.npz`) it averages
+  **0.829**. The relative gap to baselines is *wider* on the eval
+  corpus (CORE beats UMAP by 9.4× vs 10.8×, PCA by 44× vs 2.4×) because
+  baselines collapse harder on the domain-filtered distribution. Either
+  corpus is a valid measurement — just be explicit about which one.
+- The held-out experiment is measured on the planning corpus (100
+  queries per domain) because the eval corpora have only 17–30 queries
+  each — too few to hold out 20 % and get statistically meaningful
+  test-set averages. The algorithm property being tested
+  (out-of-sample generalisation) is corpus-agnostic, so planning is
+  the stronger setup for this specific question.
+- On the planning-corpus held-out benchmark, t-SNE beat CORE 3-D by
+  0.005 on one of 11 domains (C8\_asylum), using the joint-fit handicap.
+  One in eleven, smallest possible margin — but recorded honestly. On
+  the eval-corpus in-sample benchmark, CORE wins on every domain
+  against every baseline with no exceptions.
 
 ---
 

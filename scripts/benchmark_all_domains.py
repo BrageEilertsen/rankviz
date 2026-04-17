@@ -1,9 +1,24 @@
-"""Benchmark CORE against PCA / UMAP / t-SNE across all C* domain folders."""
+"""Benchmark CORE against PCA / UMAP / t-SNE across all C* domain folders.
+
+Two corpus modes, selected by CLI flag:
+
+* Default (planning corpus): read each domain's ``trajectory.npz`` and use
+  ``query_embeddings`` + ``shadow_doc_embeddings``.  This is what the
+  poison was *planned* against.
+
+* ``--eval-corpora-dir DIR``: read ``DIR/eval_corpus_C*.npz`` (produced
+  by ``scripts/build_eval_corpus.py``) and use ``query_embeddings`` +
+  ``doc_embeddings``.  This is the corpus the production retrieval
+  pipeline actually scores against — the numbers match the thesis eval.
+"""
 from __future__ import annotations
 
+import argparse
 import csv
+import glob
 import json
 import os
+import re
 import sys
 import time
 import warnings
@@ -15,7 +30,8 @@ warnings.filterwarnings("ignore")
 from rankviz import CORE
 
 BASE = "/Users/brageeilertsen/trajectory_data"
-OUT_CSV = "/Users/brageeilertsen/trajectory_data/rankviz/benchmark_results.csv"
+OUT_CSV_DEFAULT = os.path.join(BASE, "rankviz", "examples", "benchmark_results.csv")
+OUT_CSV_EVAL    = os.path.join(BASE, "rankviz", "examples", "benchmark_results_eval.csv")
 
 
 def top_k_overlap(Q, D, Q_low, D_low, k=10):
@@ -68,28 +84,56 @@ def get_eval_rate(dom):
     return float(np.mean(rates)) if rates else None
 
 
-def main():
+def _resolve_domain_sources(eval_corpora_dir: str | None):
+    """Yield (domain_label, Q, D, cos_target, eval_rate) triples."""
+    if eval_corpora_dir is not None:
+        pattern = os.path.join(eval_corpora_dir, "eval_corpus_C*.npz")
+        for path in sorted(glob.glob(pattern)):
+            m = re.search(r"eval_corpus_(C\d+_[A-Za-z0-9]+)\.npz$", path)
+            if not m:
+                continue
+            dom = m.group(1)
+            data = np.load(path, allow_pickle=True)
+            Q = data["query_embeddings"].astype(np.float32)
+            D = data["doc_embeddings"].astype(np.float32)
+            # Pull cos(target) from the companion planning trajectory.npz when
+            # it's there; otherwise leave it blank.
+            traj_npz = os.path.join(BASE, dom, "trajectory.npz")
+            cos_final = None
+            if os.path.exists(traj_npz):
+                t = np.load(traj_npz, allow_pickle=True)
+                if "cosine_similarities" in t.files:
+                    cos_final = float(t["cosine_similarities"][-1])
+            yield dom, Q, D, cos_final, get_eval_rate(dom)
+        return
+
+    # Default: read planning-phase trajectory.npz files.
     domains = sorted(
         d for d in os.listdir(BASE)
         if d.startswith("C") and "_" in d and os.path.isdir(os.path.join(BASE, d))
     )
-    print(f"[START] domains: {domains}", flush=True)
-
-    results = []
     for dom in domains:
         npz_path = os.path.join(BASE, dom, "trajectory.npz")
         if not os.path.exists(npz_path):
-            print(f"[SKIP] {dom}: no trajectory.npz", flush=True)
             continue
-
         data = np.load(npz_path, allow_pickle=True)
         Q = data["query_embeddings"].astype(np.float32)
         D = data["shadow_doc_embeddings"].astype(np.float32)
         cos_final = float(data["cosine_similarities"][-1])
-        eval_rate = get_eval_rate(dom)
+        yield dom, Q, D, cos_final, get_eval_rate(dom)
 
+
+def main(eval_corpora_dir: str | None, out_csv: str):
+    print(
+        f"[START] corpus source: "
+        f"{'eval corpora in ' + eval_corpora_dir if eval_corpora_dir else 'planning (trajectory.npz)'}",
+        flush=True,
+    )
+
+    results = []
+    for dom, Q, D, cos_final, eval_rate in _resolve_domain_sources(eval_corpora_dir):
         print(f"\n[DOMAIN] {dom}  Q={Q.shape[0]} D={D.shape[0]} "
-              f"cos(target)={cos_final:.3f} eval_retr={eval_rate}", flush=True)
+              f"cos(target)={cos_final} eval_retr={eval_rate}", flush=True)
 
         row = {
             "domain": dom,
@@ -135,12 +179,13 @@ def main():
     # Persist CSV.
     keys = ["domain", "n_q", "n_d", "cos_target", "eval_retrieval_rate",
             "CORE_2D", "CORE_3D", "PCA_3D", "UMAP_3D", "tSNE_3D"]
-    with open(OUT_CSV, "w", newline="") as f:
+    os.makedirs(os.path.dirname(out_csv) or ".", exist_ok=True)
+    with open(out_csv, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=keys)
         w.writeheader()
         for r in results:
             w.writerow({k: r.get(k) for k in keys})
-    print(f"\n[SAVED] {OUT_CSV}", flush=True)
+    print(f"\n[SAVED] {out_csv}", flush=True)
 
     # Summary table.
     print("\n[SUMMARY]", flush=True)
@@ -165,4 +210,18 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument(
+        "--eval-corpora-dir", default=None,
+        help="Directory containing eval_corpus_C*.npz files (built by "
+             "scripts/build_eval_corpus.py). If unset, use planning "
+             "trajectory.npz files.",
+    )
+    ap.add_argument(
+        "--out", default=None,
+        help=f"CSV output path. Defaults: {OUT_CSV_DEFAULT} (planning mode) "
+             f"or {OUT_CSV_EVAL} (eval-corpora mode).",
+    )
+    args = ap.parse_args()
+    out = args.out or (OUT_CSV_EVAL if args.eval_corpora_dir else OUT_CSV_DEFAULT)
+    main(args.eval_corpora_dir, out)

@@ -234,12 +234,20 @@ critical for the poison-optimisation paths shown above.
 
 #### Why this beats UMAP / PCA / t-SNE at retrieval
 
-The comparison is partly tautological — CORE is trained on exactly
-what the benchmark measures (query-document cosine distance). That's
-the point: existing methods optimise for variance, local neighbourhoods,
-or manifold topology, and retrieval is none of those things. If you
-want to visualise retrieval behaviour, the projection should be driven
-by the retrieval relationship itself.
+By construction, CORE optimises the retrieval objective directly —
+preserving the bipartite query-document cosine structure. PCA / UMAP /
+t-SNE optimise *surrogates*: variance along principal directions,
+local neighbourhood preservation, or manifold topology. Each surrogate
+is a different bet about what "structure" means in the embedding
+space, and none of them are the retrieval structure.
+
+The benchmark quantifies how well each surrogate aligns with retrieval
+behaviour in practice. An 11× mean gap between CORE and UMAP on
+in-sample top-10 overlap, and the same *relative* lead sustained on
+held-out queries, indicates that the surrogates are chasing signal
+largely orthogonal to retrieval-relevant structure. If you want to
+visualise retrieval behaviour, the projection should be driven by
+the retrieval relationship itself.
 
 #### What did not help
 

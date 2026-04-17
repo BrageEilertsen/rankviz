@@ -155,7 +155,7 @@ download these files and open them in any browser:
 Re-generate the examples from your own data:
 
 ```bash
-python scripts/generate_examples.py /path/to/your/trajectory.npz
+python scripts/generate_examples.py --trajectory /path/to/your/trajectory.npz
 ```
 
 To enable the retrieval-overlay on your own figures, pass
@@ -165,6 +165,46 @@ To enable the retrieval-overlay on your own figures, pass
 fig = plot_landscape(core, highlight=poison, target=target,
                      show_retrieved_top_k=10)
 ```
+
+### Planning corpus vs. eval corpus — use the right one
+
+GeoPoison-RAG uses **two different retrieval corpora**, and fitting CORE
+on the wrong one produces misleading plots:
+
+| Corpus | Where it lives | What it contains |
+|--------|----------------|------------------|
+| **Planning corpus** | `shadow_doc_embeddings` inside `trajectory.npz` | The 5000 random Wikipedia chunks seen during poison optimisation. Embedded without any E5 prefix. |
+| **Eval corpus** | Reconstructed at runtime by `eval_single.py`, *not saved to disk* | The planning corpus filtered by domain keywords (`~8-9 k` docs, capped at 20 k), re-embedded, with queries encoded under the `"query: "` prefix and the poison injected as the last entry. |
+
+The production `ASR@10` numbers (90–100 %) are measured on the **eval
+corpus**. The shadow corpus inside `trajectory.npz` is *only* the
+planning-phase corpus — fitting CORE on it will show the poison at a
+reasonable but unspectacular rank, which reflects that corpus but not
+the attack's true behaviour. For thesis-quality plots, rebuild the eval
+corpus and fit CORE on it:
+
+```bash
+# 1.  Reproduce the eval retrieval corpus (needs the original Wikipedia
+#     shadow corpus JSON and the per-domain config YAML):
+python scripts/build_eval_corpus.py \
+    --shadow-corpus data/cache/shadow_corpus_50000_chunked_512_50.json \
+    --domain-config configs/domains/acetaminophen_autism.yaml \
+    --seed-dir      seeds/acetaminophen_autism/seed_456 \
+    --eval-seed     1 \
+    --out           seeds/acetaminophen_autism/seed_456/eval_corpus.npz
+
+# 2.  Fit CORE on that corpus and render the plots:
+python scripts/generate_examples.py \
+    --trajectory seeds/acetaminophen_autism/seed_456/trajectory.npz \
+    --corpus     seeds/acetaminophen_autism/seed_456/eval_corpus.npz
+```
+
+See [`scripts/build_eval_corpus.py`](scripts/build_eval_corpus.py) for
+the exact reproduction logic (domain keyword filter, 20 k smart cap,
+E5 `"query: "` / passage encoding, FAISS `IndexFlatIP` matching
+`eval_single.py`'s pipeline). The script prints a sanity-check rank
+summary so you can verify it matches the reported eval `ASR@10` before
+plotting.
 
 ### How CORE works — the algorithm
 
@@ -440,6 +480,14 @@ for you.
 - t-SNE beat CORE 3-D by 0.005 on one of 11 held-out domains (C8_asylum),
   using the joint-fit handicap. One in eleven, smallest possible
   margin — but recorded honestly.
+- **The in-package benchmark fits CORE on the planning-phase shadow
+  corpus** (`shadow_doc_embeddings` inside `trajectory.npz`), not the
+  domain-filtered corpus `eval_single.py` builds at runtime. The two
+  corpora produce different ranks for the same poison, and the
+  production `ASR@10` numbers are measured on the eval corpus. See
+  [Planning corpus vs. eval corpus](#planning-corpus-vs-eval-corpus--use-the-right-one)
+  above and [`scripts/build_eval_corpus.py`](scripts/build_eval_corpus.py)
+  for the reproduction path to generate thesis-quality plots.
 
 ---
 

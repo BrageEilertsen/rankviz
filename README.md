@@ -43,6 +43,126 @@ in the query's top-10 under the projection, averaged across queries).
 UMAP in 3-D by **10.8×** on average. Full per-domain numbers are in
 [`examples/benchmark_results.csv`](examples/benchmark_results.csv).
 
+### What CORE projections look like
+
+A CORE fit on one adversarial RAG dataset (100 queries, 5000 shadow
+documents), with the poisoned document highlighted in red, the target
+in gold, and the optimisation trajectory as a coloured path. The same
+code produces both views — 2-D is a publication-ready PDF; 3-D is an
+interactive HTML file you can rotate in the browser.
+
+| 2-D (matplotlib, for publication) | 3-D (matplotlib preview) |
+|:---:|:---:|
+| ![core 2D](examples/figures/core_2d.png) | ![core 3D](examples/figures/core_3d.png) |
+
+Interactive versions (rotate, zoom, hover for exact coordinates) —
+download these files and open them in any browser:
+
+- 🌐 [`examples/figures/core_2d.html`](examples/figures/core_2d.html) — interactive 2-D
+- 🌐 [`examples/figures/core_3d.html`](examples/figures/core_3d.html) — interactive 3-D
+
+Re-generate the examples from your own data:
+
+```bash
+python scripts/generate_examples.py /path/to/your/trajectory.npz
+```
+
+### How CORE works — the algorithm
+
+The goal is a low-dimensional coordinate space where Euclidean distance
+between a query and a document reflects their cosine similarity in the
+original high-dimensional embedding space — specifically, high-similarity
+pairs (the ones that matter for retrieval) must stay close, and the
+ordering that the retriever sees must survive the projection.
+
+**Inputs.** Query embeddings $Q \in \mathbb{R}^{n_q \times D}$ and
+corpus embeddings $D \in \mathbb{R}^{n_d \times D}$, both assumed
+L2-normalised (so dot product ≡ cosine similarity). Target
+dimensionality $k \in \{2, 3\}$.
+
+**Objective.** Learn low-dim coordinates $Q^{\text{low}} \in
+\mathbb{R}^{n_q \times k}$ and $D^{\text{low}} \in \mathbb{R}^{n_d
+\times k}$ that minimise
+
+$$
+\mathcal{L} \;=\; \frac{1}{n_q \, n_d} \sum_{i=1}^{n_q} \sum_{j=1}^{n_d}
+w_{ij} \, \Big(\, \lVert Q^{\text{low}}_i - D^{\text{low}}_j \rVert_2
+\;-\; (1 - \cos(q_i, d_j)) \,\Big)^{\!2}.
+$$
+
+The target distance `1 − cos(qᵢ, dⱼ)` maps a cosine of 1 to 0 (identical)
+and a cosine of 0 to 1 (orthogonal) — monotonic, so higher similarity
+maps to shorter distance.
+
+**Weights.** The sum is weighted per pair, with three available schemes:
+
+| scheme          | $w_{ij}$            | effect                                |
+|-----------------|---------------------|---------------------------------------|
+| `"retrieval"` ✓ | $\cos(q_i, d_j)^4$  | strongly emphasises top-of-ranking    |
+| `"rank"`        | $1 / \text{rank}(j \mid i)$ | explicit top-k preservation   |
+| `"uniform"`     | $1$                 | plain bipartite MDS                   |
+
+`"retrieval"` is the default and was best on the benchmark. Raising the
+cosine to the fourth power means a cos-0.9 pair contributes ~0.66 to
+the loss weight, while a cos-0.5 pair contributes only ~0.06. High-similarity
+pairs — the ones that actually get retrieved — dominate the optimisation.
+
+**Key property: only query-document pairs appear in the loss.** Not
+query-query, not document-document. This is the bipartite asymmetry
+that PCA / UMAP / t-SNE cannot express — they treat all points
+symmetrically.
+
+**Optimisation.**
+1. **Initialise** $Q^{\text{low}}, D^{\text{low}}$ with the top-$k$
+   right singular vectors of the stacked matrix $[Q; D]$ (PCA-style
+   start), rescaled so initial inter-point distances sit near the
+   target range.
+2. **Full-batch gradient descent** for $N$ iterations (default 500):
+   - compute all pairwise low-dim distances
+     $d_{ij} = \lVert Q^{\text{low}}_i - D^{\text{low}}_j \rVert_2$;
+   - per-query gradient
+     $\nabla_{Q^{\text{low}}_i} \mathcal{L} =
+     \frac{1}{n_d} \sum_j w_{ij} \, \frac{d_{ij} - (1 - \cos(q_i, d_j))}{d_{ij}}
+     \big( Q^{\text{low}}_i - D^{\text{low}}_j \big)$;
+   - per-document gradient is the mirror with opposite sign;
+   - step size decays linearly from `lr` to `0.1 · lr`;
+   - per-row gradient L2-norms are clipped at 1.0 to tame early iterates.
+
+**Out-of-sample projection.** Once the query landscape is fit, new
+points (the poison, each trajectory step, the target) project against
+the **fixed** query coordinates:
+
+$$
+y^\star(\mathbf{x}) \;=\; \arg\min_{y \in \mathbb{R}^k}
+\sum_{i=1}^{n_q} w_i \, \Big(\, \lVert Q^{\text{low}}_i - y \rVert_2
+- (1 - \cos(q_i, \mathbf{x})) \,\Big)^{\!2}.
+$$
+
+A tiny gradient descent (200 iterations, $k$ parameters) solves this.
+Two trajectories fit against the same $Q^{\text{low}}$ are directly
+comparable, which is critical for the poison-optimisation paths in the
+figures above.
+
+**Why this beats UMAP / PCA / t-SNE at retrieval.** The comparison is
+partly tautological — CORE is trained on exactly what the benchmark
+measures (query-document cosine distance). That's the point: existing
+methods optimise for variance, local neighbourhoods, or manifold
+topology, and retrieval is none of those things. If you want to
+visualise retrieval behaviour, the projection should be driven by the
+retrieval relationship itself.
+
+**What did not help** (tested during development and discarded):
+
+- Triplet / hinge ranking loss (hurt overlap by 8–18 pp)
+- Rank-as-distance target (`j / n_d`) — catastrophic collapse
+- Random-init multi-restart — no better than SVD init
+- Longer training past 400 iterations — plateau
+- Over-complete training (fit in 5-D, PCA-compress to 2-D) — the
+  compression step breaks the learned distances
+
+The simple $\cos^4$-weighted MSE objective with SVD initialisation
+is surprisingly close to the ceiling for this data class.
+
 ### Quickstart
 
 ```python

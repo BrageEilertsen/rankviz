@@ -75,93 +75,105 @@ original high-dimensional embedding space — specifically, high-similarity
 pairs (the ones that matter for retrieval) must stay close, and the
 ordering that the retriever sees must survive the projection.
 
-**Inputs.** Query embeddings $Q \in \mathbb{R}^{n_q \times D}$ and
-corpus embeddings $D \in \mathbb{R}^{n_d \times D}$, both assumed
-L2-normalised (so dot product ≡ cosine similarity). Target
-dimensionality $k \in \{2, 3\}$.
+#### Inputs
 
-**Objective.** Learn low-dim coordinates $Q^{\text{low}} \in
-\mathbb{R}^{n_q \times k}$ and $D^{\text{low}} \in \mathbb{R}^{n_d
-\times k}$ that minimise
+- Query embeddings $Q \in \mathbb{R}^{n_q \times D}$
+- Corpus embeddings $C \in \mathbb{R}^{n_d \times D}$
+- Both L2-normalised, so the dot product equals cosine similarity
+- Target dimensionality $k \in \lbrace 2, 3 \rbrace$
+
+#### Objective
+
+Learn low-dim coordinates $X \in \mathbb{R}^{n_q \times k}$ for queries
+and $Y \in \mathbb{R}^{n_d \times k}$ for documents that minimise
 
 $$
-\mathcal{L} \;=\; \frac{1}{n_q \, n_d} \sum_{i=1}^{n_q} \sum_{j=1}^{n_d}
-w_{ij} \, \Big(\, \lVert Q^{\text{low}}_i - D^{\text{low}}_j \rVert_2
-\;-\; (1 - \cos(q_i, d_j)) \,\Big)^{\!2}.
+\mathcal{L}(X, Y) = \frac{1}{n_q \, n_d} \sum_{i, j} w_{ij} \left( \lVert X_i - Y_j \rVert_2 - t_{ij} \right)^2
 $$
 
-The target distance `1 − cos(qᵢ, dⱼ)` maps a cosine of 1 to 0 (identical)
-and a cosine of 0 to 1 (orthogonal) — monotonic, so higher similarity
-maps to shorter distance.
+where $t_{ij} = 1 - \cos(q_i, c_j)$ is the target distance (a cosine of 1
+maps to distance 0; cosine 0 maps to distance 1 — monotonic).
 
-**Weights.** The sum is weighted per pair, with three available schemes:
+#### Weights
 
-| scheme          | $w_{ij}$            | effect                                |
-|-----------------|---------------------|---------------------------------------|
-| `"retrieval"` ✓ | $\cos(q_i, d_j)^4$  | strongly emphasises top-of-ranking    |
-| `"rank"`        | $1 / \text{rank}(j \mid i)$ | explicit top-k preservation   |
-| `"uniform"`     | $1$                 | plain bipartite MDS                   |
+Three weighting schemes control which pairs dominate the loss:
 
-`"retrieval"` is the default and was best on the benchmark. Raising the
-cosine to the fourth power means a cos-0.9 pair contributes ~0.66 to
-the loss weight, while a cos-0.5 pair contributes only ~0.06. High-similarity
-pairs — the ones that actually get retrieved — dominate the optimisation.
+| scheme            | $w_{ij}$            | effect                              |
+|-------------------|---------------------|-------------------------------------|
+| `"retrieval"` ✓   | $\cos(q_i, c_j)^4$  | emphasises top-of-ranking           |
+| `"rank"`          | $1 / r_{ij}$        | explicit top-k preservation         |
+| `"uniform"`       | $1$                 | plain bipartite MDS                 |
+
+Here $r_{ij}$ is the rank of document $j$ for query $i$ (1 = most similar).
+
+`"retrieval"` is the default. Raising cosine to the fourth power means a
+cos-0.9 pair contributes ~0.66 to the weight, while a cos-0.5 pair contributes
+only ~0.06 — the top of the ranking dominates the optimisation.
 
 **Key property: only query-document pairs appear in the loss.** Not
-query-query, not document-document. This is the bipartite asymmetry
-that PCA / UMAP / t-SNE cannot express — they treat all points
+query-query, not document-document. This bipartite asymmetry is exactly
+what PCA / UMAP / t-SNE cannot express — they treat all points
 symmetrically.
 
-**Optimisation.**
-1. **Initialise** $Q^{\text{low}}, D^{\text{low}}$ with the top-$k$
-   right singular vectors of the stacked matrix $[Q; D]$ (PCA-style
+#### Optimisation
+
+1. **Initialise** $X, Y$ from the top-$k$ right singular vectors of the
+   stacked matrix $\begin{bmatrix} Q \\ C \end{bmatrix}$ (PCA-style
    start), rescaled so initial inter-point distances sit near the
    target range.
-2. **Full-batch gradient descent** for $N$ iterations (default 500):
-   - compute all pairwise low-dim distances
-     $d_{ij} = \lVert Q^{\text{low}}_i - D^{\text{low}}_j \rVert_2$;
-   - per-query gradient
-     $\nabla_{Q^{\text{low}}_i} \mathcal{L} =
-     \frac{1}{n_d} \sum_j w_{ij} \, \frac{d_{ij} - (1 - \cos(q_i, d_j))}{d_{ij}}
-     \big( Q^{\text{low}}_i - D^{\text{low}}_j \big)$;
-   - per-document gradient is the mirror with opposite sign;
-   - step size decays linearly from `lr` to `0.1 · lr`;
-   - per-row gradient L2-norms are clipped at 1.0 to tame early iterates.
 
-**Out-of-sample projection.** Once the query landscape is fit, new
-points (the poison, each trajectory step, the target) project against
-the **fixed** query coordinates:
+2. **Full-batch gradient descent** for $N$ iterations (default 500):
+
+   Let $d_{ij} = \lVert X_i - Y_j \rVert_2$ be the current low-dim
+   distance and $e_{ij} = d_{ij} - t_{ij}$ the error. Per-point gradients
+   are
 
 $$
-y^\star(\mathbf{x}) \;=\; \arg\min_{y \in \mathbb{R}^k}
-\sum_{i=1}^{n_q} w_i \, \Big(\, \lVert Q^{\text{low}}_i - y \rVert_2
-- (1 - \cos(q_i, \mathbf{x})) \,\Big)^{\!2}.
+\nabla_{X_i} \mathcal{L} = \frac{1}{n_d} \sum_j w_{ij} \, \frac{e_{ij}}{d_{ij}} \, (X_i - Y_j),
+\qquad
+\nabla_{Y_j} \mathcal{L} = -\frac{1}{n_q} \sum_i w_{ij} \, \frac{e_{ij}}{d_{ij}} \, (X_i - Y_j).
+$$
+
+   The learning rate decays linearly from `lr` to `0.1 · lr`, and
+   per-row gradient L2-norms are clipped at 1.0 to tame early iterates.
+
+#### Out-of-sample projection
+
+Once the query landscape $X$ is fit, new points (the poison, each
+trajectory step, the target) project against the **fixed** query
+coordinates. For a new embedding $z$, let
+$\tilde{t}_i = 1 - \cos(q_i, z)$ and solve
+
+$$
+y^{\star}(z) = \arg\min_{y \in \mathbb{R}^k} \sum_{i} w_i \left( \lVert X_i - y \rVert_2 - \tilde{t}_i \right)^2.
 $$
 
 A tiny gradient descent (200 iterations, $k$ parameters) solves this.
-Two trajectories fit against the same $Q^{\text{low}}$ are directly
-comparable, which is critical for the poison-optimisation paths in the
-figures above.
+Two trajectories fit against the same $X$ are directly comparable —
+critical for the poison-optimisation paths shown above.
 
-**Why this beats UMAP / PCA / t-SNE at retrieval.** The comparison is
-partly tautological — CORE is trained on exactly what the benchmark
-measures (query-document cosine distance). That's the point: existing
-methods optimise for variance, local neighbourhoods, or manifold
-topology, and retrieval is none of those things. If you want to
-visualise retrieval behaviour, the projection should be driven by the
-retrieval relationship itself.
+#### Why this beats UMAP / PCA / t-SNE at retrieval
 
-**What did not help** (tested during development and discarded):
+The comparison is partly tautological — CORE is trained on exactly
+what the benchmark measures (query-document cosine distance). That's
+the point: existing methods optimise for variance, local neighbourhoods,
+or manifold topology, and retrieval is none of those things. If you
+want to visualise retrieval behaviour, the projection should be driven
+by the retrieval relationship itself.
 
-- Triplet / hinge ranking loss (hurt overlap by 8–18 pp)
-- Rank-as-distance target (`j / n_d`) — catastrophic collapse
-- Random-init multi-restart — no better than SVD init
-- Longer training past 400 iterations — plateau
-- Over-complete training (fit in 5-D, PCA-compress to 2-D) — the
+#### What did not help
+
+Tested during development and discarded:
+
+- **Triplet / hinge ranking loss** — hurt overlap by 8–18 percentage points
+- **Rank-as-distance target** ($t_{ij} = r_{ij} / n_d$) — catastrophic collapse
+- **Random-init multi-restart** — no better than SVD init
+- **Longer training past 400 iterations** — plateau
+- **Over-complete training** (fit in 5-D, PCA-compress to 2-D) — the
   compression step breaks the learned distances
 
-The simple $\cos^4$-weighted MSE objective with SVD initialisation
-is surprisingly close to the ceiling for this data class.
+The simple $\cos^4$-weighted MSE objective with SVD initialisation is
+surprisingly close to the ceiling for this data class.
 
 ### Quickstart
 

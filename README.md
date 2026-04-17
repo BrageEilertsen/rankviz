@@ -125,29 +125,32 @@ python scripts/umap_sensitivity.py
 
 ### What CORE projections look like
 
-A CORE fit on one adversarial RAG dataset (100 queries, 5000 shadow
-documents). Grey dots are corpus documents. Blue dots are queries.
-**Orange dots are the documents that actually end up in at least one
-query's top-10 retrieval set** — colour intensity shows how many
-queries retrieve each one. The poisoned document is highlighted in
-red, the target in gold, and the attacker's optimisation trajectory
-is the coloured path from green (iter 0) to red (final).
+A CORE fit on the **C4\_chemo** attack (20 evaluation queries, 9 333
+domain-filtered corpus documents, E5 `"query:"` / passage encoding —
+the exact retrieval index `eval_single.py` builds). The stored eval
+ranks are **median 2, ASR@1 = 40 %, ASR@10 = 95 %** — i.e. the attack
+genuinely succeeds in this corpus.
+
+Grey dots are corpus documents. Small blue dots are queries.
+**Orange-to-red dots are the documents that actually end up in at
+least one query's top-10** — colour intensity shows *how many*
+queries retrieve each one. The poisoned document is the red marker,
+the target is the gold diamond, and the optimisation trajectory is
+the coloured path from green (iter 0) to red (final).
 
 | 2-D (matplotlib, for publication) | 3-D (matplotlib preview) |
 |:---:|:---:|
 | ![core 2D](examples/figures/core_2d.png) | ![core 3D](examples/figures/core_3d.png) |
 
-**Read the plot:** the orange cloud *is* the retrieval set — those
-are the documents the system returns across the query distribution.
-Most orange dots are dim, appearing in only 1-3 queries' top-10
-(specialist documents near their home queries). The red poison dot
-sits among the orange cloud, at a position where it would itself be
-orange with high intensity if drawn as a corpus document — i.e. it
-hits many queries' top-10 at once. That uniform, central reach is
-exactly the attack signature.
+**Read the plot:** the dark-red cluster in the lower-right *is* the
+retrieval hot zone. Documents there are in the top-10 for 10–20 of
+the 20 evaluation queries. The poison lands directly on the target
+(gold diamond) and sits inside that hot zone — which is the attack
+geometry, visible in one glance. Documents outside the hot zone
+(pale orange or grey) are either specialists hit by one or two
+queries, or filler that never gets retrieved at all.
 
-Interactive versions (rotate, zoom, hover for exact coordinates) —
-download these files and open them in any browser:
+Interactive versions (rotate, zoom, hover for exact coordinates):
 
 - 🌐 [`examples/figures/core_2d.html`](examples/figures/core_2d.html) — interactive 2-D
 - 🌐 [`examples/figures/core_3d.html`](examples/figures/core_3d.html) — interactive 3-D

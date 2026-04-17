@@ -50,9 +50,15 @@ def _load_inputs(trajectory_npz: str, corpus_npz: str | None):
 
     if corpus_npz is not None:
         cdata = np.load(corpus_npz, allow_pickle=True)
-        if "corpus_embeddings" not in cdata.files:
+        # Accept either `corpus_embeddings` (build_eval_corpus.py) or the
+        # Master-repo naming `doc_embeddings`.
+        corpus_key = next(
+            (k for k in ("corpus_embeddings", "doc_embeddings") if k in cdata.files),
+            None,
+        )
+        if corpus_key is None:
             raise ValueError(
-                f"{corpus_npz} must contain a `corpus_embeddings` array."
+                f"{corpus_npz} must contain `corpus_embeddings` or `doc_embeddings`."
             )
         if "query_embeddings" not in cdata.files:
             raise ValueError(
@@ -61,12 +67,13 @@ def _load_inputs(trajectory_npz: str, corpus_npz: str | None):
                 "'query: ' prefix."
             )
         Q = cdata["query_embeddings"].astype(np.float32)
-        D = cdata["corpus_embeddings"].astype(np.float32)
-        poison = (
-            cdata["poison_embedding"].astype(np.float32)
-            if "poison_embedding" in cdata.files
-            else tdata["trajectory"][-1].astype(np.float32)
-        )
+        D = cdata[corpus_key].astype(np.float32)
+        if "poison_embedding" in cdata.files:
+            poison = cdata["poison_embedding"].astype(np.float32)
+            if poison.ndim == 2:
+                poison = poison.squeeze(0)
+        else:
+            poison = tdata["trajectory"][-1].astype(np.float32)
     else:
         Q = tdata["query_embeddings"].astype(np.float32)
         D = tdata["shadow_doc_embeddings"].astype(np.float32)

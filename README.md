@@ -178,12 +178,16 @@ sits inside the orange retrieval hot zone, usually next to the target
 (gold) — a visual fingerprint of the attack that's the same across
 medical, political, legal, and scientific misinformation categories.
 
+Each 2-D preview below links to its interactive 3-D HTML (download the
+file and open in any browser to rotate, zoom, and hover for exact
+coordinates).
+
 |   |   |   |
 |:---:|:---:|:---:|
-| ![C1 SSRI](examples/figures/per_domain/C1_ssri.png)  <br>**C1 SSRI** | ![C2 flu](examples/figures/per_domain/C2_flu.png)  <br>**C2 flu** | ![C3 acetaminophen](examples/figures/per_domain/C3_acetaminophen.png)  <br>**C3 acetaminophen** |
-| ![C4 chemo](examples/figures/per_domain/C4_chemo.png)  <br>**C4 chemo** | ![C5 5G](examples/figures/per_domain/C5_5g.png)  <br>**C5 5G** | ![C6 bankruptcy](examples/figures/per_domain/C6_bankruptcy.png)  <br>**C6 bankruptcy** |
-| ![C7 GMO](examples/figures/per_domain/C7_gmo.png)  <br>**C7 GMO** | ![C8 asylum](examples/figures/per_domain/C8_asylum.png)  <br>**C8 asylum** | ![C9 mail-in](examples/figures/per_domain/C9_mailin.png)  <br>**C9 mail-in** |
-| ![C10 voter](examples/figures/per_domain/C10_voter.png)  <br>**C10 voter** | ![C11 quote](examples/figures/per_domain/C11_quote.png)  <br>**C11 quote** |  |
+| ![C1 SSRI](examples/figures/per_domain/C1_ssri.png)  <br>**C1 SSRI** · [3-D](examples/figures/per_domain/C1_ssri_3d.html) | ![C2 flu](examples/figures/per_domain/C2_flu.png)  <br>**C2 flu** · [3-D](examples/figures/per_domain/C2_flu_3d.html) | ![C3 acetaminophen](examples/figures/per_domain/C3_acetaminophen.png)  <br>**C3 acetaminophen** · [3-D](examples/figures/per_domain/C3_acetaminophen_3d.html) |
+| ![C4 chemo](examples/figures/per_domain/C4_chemo.png)  <br>**C4 chemo** · [3-D](examples/figures/per_domain/C4_chemo_3d.html) | ![C5 5G](examples/figures/per_domain/C5_5g.png)  <br>**C5 5G** · [3-D](examples/figures/per_domain/C5_5g_3d.html) | ![C6 bankruptcy](examples/figures/per_domain/C6_bankruptcy.png)  <br>**C6 bankruptcy** · [3-D](examples/figures/per_domain/C6_bankruptcy_3d.html) |
+| ![C7 GMO](examples/figures/per_domain/C7_gmo.png)  <br>**C7 GMO** · [3-D](examples/figures/per_domain/C7_gmo_3d.html) | ![C8 asylum](examples/figures/per_domain/C8_asylum.png)  <br>**C8 asylum** · [3-D](examples/figures/per_domain/C8_asylum_3d.html) | ![C9 mail-in](examples/figures/per_domain/C9_mailin.png)  <br>**C9 mail-in** · [3-D](examples/figures/per_domain/C9_mailin_3d.html) |
+| ![C10 voter](examples/figures/per_domain/C10_voter.png)  <br>**C10 voter** · [3-D](examples/figures/per_domain/C10_voter_3d.html) | ![C11 quote](examples/figures/per_domain/C11_quote.png)  <br>**C11 quote** · [3-D](examples/figures/per_domain/C11_quote_3d.html) |  |
 
 Re-generate the examples from your own data:
 

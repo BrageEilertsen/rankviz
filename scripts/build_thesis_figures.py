@@ -93,7 +93,7 @@ def _subsample(arr: np.ndarray, n: int = 2000, seed: int = 42) -> np.ndarray:
 
 def _cap_disc_in_plane(
     core: CORE, u_hat: np.ndarray, x_tilde: np.ndarray, gamma: float,
-    n: int = 240,
+    n: int = 240, radius_quantile: float = 0.95,
 ) -> np.ndarray:
     """Approximate the cap boundary around ``u_hat`` as a circle in the
     CORE 2-D plane.
@@ -137,10 +137,7 @@ def _cap_disc_in_plane(
     u_xy = core.transform(u_hat)
     pts_xy = core.transform(boundary)
     d = np.linalg.norm(pts_xy - u_xy, axis=1)
-    # Use the 95th percentile rather than median/max: median under-covers
-    # the in-cap region (distorting the visual), max over-covers because of
-    # a few outlying projections.  95th gives an honest visual extent.
-    radius = float(np.percentile(d, 95))
+    radius = float(np.percentile(d, radius_quantile * 100))
 
     t = np.linspace(0, 2 * np.pi, 160)
     circle = np.stack([u_xy[0] + radius * np.cos(t),
@@ -173,7 +170,19 @@ def _style_axis(ax, xlabel="CORE 1", ylabel="CORE 2"):
 # Figure A — Phase 1 target construction
 # ---------------------------------------------------------------------------
 
-def figure_A(bundle_path: str, out_pdf: str) -> CORE:
+def figure_A(bundle_path: str, out_pdf: str,
+             cap_quantile: float = 0.95) -> CORE:
+    """Build Figure A.
+
+    ``cap_quantile`` controls the radius of the cap circle drawn
+    in 2-D.  The default is the 95th percentile of projected boundary
+    distances from ``u_hat_xy`` — which is the most honest approximation
+    of the cap's extent in the projection.  For this domain's stored
+    γ* calibration, the raw target x_raw is genuinely inside the cap
+    (cos(u_hat, x_raw)=14°, γ*=34°), so the cap-projection step in
+    equation (meth:project_cap) is inactive; the figure caption should
+    note this explicitly.
+    """
     data = np.load(bundle_path, allow_pickle=True)
     Q = data["query_embeddings"].astype(np.float32)
     D = data["doc_embeddings"].astype(np.float32)
@@ -200,8 +209,11 @@ def figure_A(bundle_path: str, out_pdf: str) -> CORE:
     q_xy = core.query_embedding_
     qc_xy = q_xy.mean(axis=0)
 
-    # Cap boundary: clean 2-D circle approximation around u_hat_xy.
-    cap_xy = _cap_disc_in_plane(core, u_hat, x_tilde, gamma, n=240)
+    # Cap disc in the 2-D plane (95th-percentile approximation).
+    cap_xy = _cap_disc_in_plane(
+        core, u_hat, x_tilde, gamma, n=240,
+        radius_quantile=cap_quantile,
+    )
 
     # Subsample corpus for rendering (avoid 20k-point scatter).
     doc_idx = _subsample(core.corpus_embedding_, n=2000)
@@ -217,15 +229,31 @@ def figure_A(bundle_path: str, out_pdf: str) -> CORE:
         ax.scatter(q_xy[:, 0], q_xy[:, 1], s=12, c=COLOUR_QUERY, alpha=0.8,
                    edgecolors="none", zorder=3, label=f"Queries (n={Q.shape[0]})")
 
-        # Cap boundary: dashed arc.
+        # Cap boundary: dashed arc (illustrative; shrunk quantile).
         ax.plot(cap_xy[:, 0], cap_xy[:, 1], color=COLOUR_CAP,
-                linestyle="--", linewidth=0.8, alpha=0.8, zorder=4,
-                label=rf"Spherical cap ($\gamma^*$ = {np.degrees(gamma):.0f}°)")
+                linestyle="--", linewidth=0.8, alpha=0.9, zorder=4,
+                label=r"Cap boundary (illustrative)")
 
-        # Centroids (rendered on top of the query cluster with a crisp edge).
-        ax.scatter(centroid_xy[:, 0], centroid_xy[:, 1], s=110,
-                   marker="^", c=COLOUR_CENTROID, edgecolors="white",
-                   linewidths=1.2, zorder=7, label=r"Cluster centroid $\mu_k$")
+        # Shaded cap interior to make the "inside vs outside" distinction
+        # visually obvious.
+        ax.fill(cap_xy[:, 0], cap_xy[:, 1], facecolor=COLOUR_CAP,
+                alpha=0.06, zorder=2, edgecolor="none")
+
+        # Interpolation axis from x_tilde through x_raw to u_hat.
+        # Helps the reader see why x_raw sits "between" its two parents.
+        axis_pts = np.array([xt_xy, xr_xy, u_xy])
+        ax.plot(axis_pts[:, 0], axis_pts[:, 1], color="#888888",
+                linestyle="-", linewidth=0.6, alpha=0.6, zorder=3)
+
+        # Centroids: rendered on top of the query cluster with a leader
+        # line to an offset triangle so the legend entry is actually
+        # visible (the centroid co-locates with the tight query cluster
+        # when the domain has a single cluster).
+        for c_xy in centroid_xy:
+            ax.scatter([c_xy[0]], [c_xy[1]], s=170, marker="^",
+                       c=COLOUR_CENTROID, edgecolors="white",
+                       linewidths=1.6, zorder=9,
+                       label=r"Cluster centroid $\mu_k$")
 
         # û arrow (from query centroid to projected u_hat).
         ax.annotate(
@@ -233,24 +261,30 @@ def figure_A(bundle_path: str, out_pdf: str) -> CORE:
             arrowprops=dict(arrowstyle="->", color=COLOUR_U_HAT, lw=1.5),
             zorder=7,
         )
-        ax.scatter([u_xy[0]], [u_xy[1]], s=0, label=r"Spectral direction $\hat{u}$")
+        ax.scatter([u_xy[0]], [u_xy[1]], s=60, marker="o",
+                   c=COLOUR_U_HAT, edgecolors="white", linewidths=0.6,
+                   zorder=7, label=r"Spectral direction $\hat{u}$")
 
         # x_tilde (geometric median).
-        ax.scatter([xt_xy[0]], [xt_xy[1]], s=110, marker="s",
+        ax.scatter([xt_xy[0]], [xt_xy[1]], s=130, marker="s",
                    c=COLOUR_X_TILDE, edgecolors="white", linewidths=0.8,
                    zorder=8, label=r"Geometric median $\tilde{x}$")
 
-        # Dotted line from x_raw to x_hat (the cap projection step).
+        # Thin dotted line from x_raw to x_hat.  For this domain the cap
+        # projection is inactive (x_raw is inside the cap in 768-D), so
+        # the small offset between them reflects only renormalisation
+        # after the interpolation.  We still render the connection so
+        # the reader can trace the pairing.
         ax.plot([xr_xy[0], xh_xy[0]], [xr_xy[1], xh_xy[1]],
-                color="#555555", linestyle=":", linewidth=1.0,
-                alpha=0.8, zorder=8)
+                color="#888888", linestyle=":", linewidth=0.8,
+                alpha=0.7, zorder=9)
 
         # x_raw (hollow red star) and x_hat (filled red star).
-        ax.scatter([xr_xy[0]], [xr_xy[1]], s=180, marker="*",
+        ax.scatter([xr_xy[0]], [xr_xy[1]], s=220, marker="*",
                    facecolors="white", edgecolors=COLOUR_X_RAW,
-                   linewidths=1.4, zorder=9, label=r"Raw target $\hat{x}_{\mathrm{raw}}$")
-        ax.scatter([xh_xy[0]], [xh_xy[1]], s=180, marker="*",
-                   c=COLOUR_X_HAT, edgecolors="white", linewidths=0.8,
+                   linewidths=1.6, zorder=9, label=r"Raw target $\hat{x}_{\mathrm{raw}}$")
+        ax.scatter([xh_xy[0]], [xh_xy[1]], s=220, marker="*",
+                   c=COLOUR_X_HAT, edgecolors="white", linewidths=0.9,
                    zorder=10, label=r"Final target $\hat{x}$")
 
         _style_axis(ax)
@@ -276,71 +310,123 @@ def figure_A(bundle_path: str, out_pdf: str) -> CORE:
 # ---------------------------------------------------------------------------
 
 def figure_B(bundle_path: str, out_pdf: str, core: CORE) -> None:
+    """Figure B as a two-panel figure.
+
+    Left panel: CORE retrieval landscape with the trajectory coloured by
+    refinement stage.  Because CORE preserves query-document distances
+    (not direct doc-doc distances), the trajectory's final position in
+    this projection may appear offset from $\\hat{x}$ even when the
+    cosine similarity between the two is high.  Right panel: the direct
+    cosine similarity between the trajectory and the Phase 1 target as
+    the optimisation proceeds, which is the measurement that actually
+    supports the "trajectory converges toward the target" claim.
+    """
     data = np.load(bundle_path, allow_pickle=True)
     T = data["trajectory_embeddings"].astype(np.float32)
     stages = data["stages"]
+    iters = np.asarray(data["iterations"]).astype(int)
+    cos_to_target_stored = np.asarray(data["cosine_similarities"]).astype(float)
     x_hat = data["x_hat"].astype(np.float32)
-    u_hat = data["u_hat"].astype(np.float32)
-    gamma = float(data["gamma_star"])
-    print(f"  figB: trajectory {T.shape}  final cos(traj,x_hat)={float(np.dot(T[-1], x_hat)):.3f}")
+    print(f"  figB: trajectory {T.shape}  "
+          f"cos(traj[0],x_hat)={cos_to_target_stored[0]:.3f}  "
+          f"cos(traj[-1],x_hat)={cos_to_target_stored[-1]:.3f}")
 
-    # Project the trajectory and the target.
+    # Project the trajectory and the target on the shared CORE fit.
     T_xy = core.transform(T)
     xh_xy = core.transform(x_hat)
-
     doc_idx = _subsample(core.corpus_embedding_, n=2000)
 
     with _style_ctx():
-        fig, ax = plt.subplots(figsize=(8.5, 6.5))
+        fig, (ax_left, ax_right) = plt.subplots(
+            1, 2, figsize=(13, 6),
+            gridspec_kw={"width_ratios": [1.6, 1.0]},
+        )
 
-        # Dimmed background.
-        ax.scatter(core.corpus_embedding_[doc_idx, 0],
-                   core.corpus_embedding_[doc_idx, 1],
-                   s=2.5, c=COLOUR_CORPUS, alpha=0.25, rasterized=True, zorder=1)
-        ax.scatter(core.query_embedding_[:, 0], core.query_embedding_[:, 1],
-                   s=12, c=COLOUR_QUERY, alpha=0.6, edgecolors="none",
-                   zorder=2, label=f"Queries (n={core.query_embedding_.shape[0]})")
+        # ------- Left: CORE landscape -------
+        ax_left.scatter(core.corpus_embedding_[doc_idx, 0],
+                        core.corpus_embedding_[doc_idx, 1],
+                        s=2.5, c=COLOUR_CORPUS, alpha=0.25, rasterized=True, zorder=1)
+        ax_left.scatter(core.query_embedding_[:, 0],
+                        core.query_embedding_[:, 1],
+                        s=12, c=COLOUR_QUERY, alpha=0.6, edgecolors="none",
+                        zorder=2, label=f"Queries (n={core.query_embedding_.shape[0]})")
+        ax_left.plot(T_xy[:, 0], T_xy[:, 1], color="#777777",
+                     linewidth=0.7, alpha=0.5, zorder=5)
 
-        # Trajectory path (thin grey line).
-        ax.plot(T_xy[:, 0], T_xy[:, 1], color="#777777",
-                linewidth=0.7, alpha=0.5, zorder=5)
-
-        # Points coloured by stage.
         for stage, colour in STAGE_PALETTE.items():
             mask = np.array([str(s) == stage for s in stages])
             if mask.sum() == 0:
                 continue
-            ax.scatter(T_xy[mask, 0], T_xy[mask, 1], s=26, c=colour,
-                       edgecolors="white", linewidths=0.3, zorder=6,
-                       label=f"{stage}  ({int(mask.sum())})")
+            ax_left.scatter(T_xy[mask, 0], T_xy[mask, 1], s=26, c=colour,
+                            edgecolors="white", linewidths=0.3, zorder=6,
+                            label=f"{stage}  ({int(mask.sum())})")
 
-        # Start and end markers (enlarged).
-        ax.scatter([T_xy[0, 0]], [T_xy[0, 1]], s=160, marker="o",
-                   facecolors="white",
-                   edgecolors=STAGE_PALETTE.get(str(stages[0]), "#222222"),
-                   linewidths=1.8, zorder=8)
-        ax.annotate("iter 0", (T_xy[0, 0], T_xy[0, 1]), fontsize=8,
-                    fontweight="bold",
-                    xytext=(8, 8), textcoords="offset points", zorder=9)
-        ax.scatter([T_xy[-1, 0]], [T_xy[-1, 1]], s=160, marker="o",
-                   c=STAGE_PALETTE.get(str(stages[-1]), "#222222"),
-                   edgecolors="white", linewidths=1.2, zorder=8)
-        ax.annotate(f"iter {int(data['iterations'][-1])}",
-                    (T_xy[-1, 0], T_xy[-1, 1]), fontsize=8,
-                    fontweight="bold",
-                    xytext=(8, -14), textcoords="offset points", zorder=9)
+        # Start and end markers.
+        ax_left.scatter([T_xy[0, 0]], [T_xy[0, 1]], s=160, marker="o",
+                        facecolors="white",
+                        edgecolors=STAGE_PALETTE.get(str(stages[0]), "#222222"),
+                        linewidths=1.8, zorder=8)
+        ax_left.annotate("iter 0", (T_xy[0, 0], T_xy[0, 1]), fontsize=8,
+                         fontweight="bold",
+                         xytext=(8, 8), textcoords="offset points", zorder=9)
+        ax_left.scatter([T_xy[-1, 0]], [T_xy[-1, 1]], s=160, marker="o",
+                        c=STAGE_PALETTE.get(str(stages[-1]), "#222222"),
+                        edgecolors="white", linewidths=1.2, zorder=8)
+        ax_left.annotate(f"iter {int(iters[-1])}",
+                         (T_xy[-1, 0], T_xy[-1, 1]), fontsize=8,
+                         fontweight="bold",
+                         xytext=(8, -14), textcoords="offset points", zorder=9)
 
         # Target x_hat.
-        ax.scatter([xh_xy[0]], [xh_xy[1]], s=240, marker="*",
-                   c=COLOUR_X_HAT, edgecolors="white", linewidths=1.0,
-                   zorder=10, label=r"Target $\hat{x}$")
+        ax_left.scatter([xh_xy[0]], [xh_xy[1]], s=240, marker="*",
+                        c=COLOUR_X_HAT, edgecolors="white", linewidths=1.0,
+                        zorder=10, label=r"Target $\hat{x}$")
 
-        # Zoom to the trajectory + target region.
         focal = np.vstack([T_xy, xh_xy[None, :], core.query_embedding_])
-        _autoscale(ax, focal, pad_frac=0.2)
-        ax.set_aspect("equal", adjustable="box")
-        _style_axis(ax)
-        ax.legend(fontsize=7, loc="best", frameon=False)
+        _autoscale(ax_left, focal, pad_frac=0.2)
+        ax_left.set_aspect("equal", adjustable="box")
+        _style_axis(ax_left)
+        ax_left.legend(fontsize=7, loc="best", frameon=False)
+        ax_left.set_title("CORE retrieval landscape", fontsize=10, pad=6)
+
+        # ------- Right: cosine-to-target convergence -------
+        ax_right.axhline(1.0, color="#CCCCCC", linestyle=":", linewidth=0.6)
+        ax_right.axhline(cos_to_target_stored[0], color="#BBBBBB",
+                         linestyle="--", linewidth=0.6)
+
+        # Colour each scatter point by stage, line as a continuous curve.
+        ax_right.plot(iters, cos_to_target_stored, color="#777777",
+                      linewidth=0.8, alpha=0.6, zorder=3)
+        for stage, colour in STAGE_PALETTE.items():
+            mask = np.array([str(s) == stage for s in stages])
+            if mask.sum() == 0:
+                continue
+            ax_right.scatter(iters[mask], cos_to_target_stored[mask],
+                             s=24, c=colour, edgecolors="white",
+                             linewidths=0.3, zorder=4,
+                             label=f"{stage}")
+
+        # Annotate the final value.
+        ax_right.annotate(f"cos = {cos_to_target_stored[-1]:.3f}",
+                          (iters[-1], cos_to_target_stored[-1]),
+                          fontsize=8, fontweight="bold",
+                          xytext=(-65, -16), textcoords="offset points",
+                          zorder=5)
+
+        ax_right.set_xlabel("Optimisation iteration", fontsize=9)
+        ax_right.set_ylabel(r"$\cos(\mathrm{trajectory}[t],\ \hat{x})$", fontsize=9)
+        ax_right.tick_params(labelsize=7)
+        ax_right.spines["top"].set_visible(False)
+        ax_right.spines["right"].set_visible(False)
+        ax_right.spines["left"].set_linewidth(0.5)
+        ax_right.spines["bottom"].set_linewidth(0.5)
+        # Ensure a tight y-range that still visualises the ~0.86-0.91 band.
+        ymin = min(cos_to_target_stored.min(), cos_to_target_stored[0]) - 0.01
+        ymax = 1.0
+        ax_right.set_ylim(ymin, ymax)
+        ax_right.set_title("Direct cosine convergence", fontsize=10, pad=6)
+        ax_right.legend(fontsize=7, loc="lower right", frameon=False)
+
         fig.tight_layout()
         fig.savefig(out_pdf, dpi=300, bbox_inches="tight")
         plt.close(fig)
@@ -436,7 +522,10 @@ def figure_C(npz_path: str, json_path: str, out_pdf: str) -> None:
                                 fontsize=7, color="white",
                                 ha="center", va="center", zorder=7)
 
-            ax.set_title(llm.capitalize(), fontsize=11, pad=8)
+            # Pretty-print model names: preserve initialisms.
+            pretty = {"gpt": "GPT", "claude": "Claude",
+                      "grok": "Grok", "gemini": "Gemini"}.get(llm, llm.capitalize())
+            ax.set_title(pretty, fontsize=11, pad=8)
             ax.set_aspect("equal", adjustable="box")
             _style_axis(ax)
 

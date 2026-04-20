@@ -438,7 +438,8 @@ def figure_B(bundle_path: str, out_pdf: str, core: CORE) -> None:
 # Figure C — Cross-model retrieval landscape
 # ---------------------------------------------------------------------------
 
-def figure_C(npz_path: str, json_path: str, out_pdf: str) -> None:
+def figure_C(npz_path: str, json_path: str, out_pdf: str,
+             preferred_query: str | None = None) -> None:
     z = np.load(npz_path, allow_pickle=True)
     with open(json_path) as f:
         responses = json.load(f)
@@ -451,22 +452,38 @@ def figure_C(npz_path: str, json_path: str, out_pdf: str) -> None:
     n_llms = len(llms)
     print(f"  figC: LLMs in bundle: {llms}")
 
-    # Pick a representative query shared by every LLM that has poison
-    # at rank 1 and meaningful response lengths.
     shared_q = set(entry["query"] for entry in responses[llms[0]])
     for llm in llms[1:]:
         shared_q &= {e["query"] for e in responses[llm]}
+
     chosen = None
-    for q in shared_q:
-        entries = {llm: next(e for e in responses[llm] if e["query"] == q) for llm in llms}
-        if all(entries[llm]["poison_rank"] == 1 for llm in llms) and \
-           all(len(entries[llm]["response_with_poison"]) > 400 for llm in llms):
-            chosen = (q, entries)
-            break
+
+    # 1) Honour a user-supplied preferred query when every LLM has it and
+    #    the poison is retrieved at rank 1 across all of them.
+    if preferred_query is not None and preferred_query in shared_q:
+        entries = {
+            llm: next(e for e in responses[llm] if e["query"] == preferred_query)
+            for llm in llms
+        }
+        if all(entries[llm]["poison_rank"] == 1 for llm in llms):
+            chosen = (preferred_query, entries)
+
+    # 2) Otherwise pick the first shared query where every LLM retrieved
+    #    the poison at rank 1 with a meaningful-length response.
     if chosen is None:
-        chosen = (next(iter(shared_q)),
-                  {llm: next(e for e in responses[llm] if e["query"] == next(iter(shared_q)))
-                   for llm in llms})
+        for q in shared_q:
+            entries = {llm: next(e for e in responses[llm] if e["query"] == q) for llm in llms}
+            if all(entries[llm]["poison_rank"] == 1 for llm in llms) and \
+               all(len(entries[llm]["response_with_poison"]) > 400 for llm in llms):
+                chosen = (q, entries)
+                break
+
+    # 3) Fall back to any shared query.
+    if chosen is None:
+        q0 = next(iter(shared_q))
+        chosen = (q0, {llm: next(e for e in responses[llm] if e["query"] == q0)
+                       for llm in llms})
+
     query, entries = chosen
     print(f"  figC: representative query = \"{query}\"")
 
@@ -755,7 +772,8 @@ def _draw_gt_panel(ax, core: CORE, *, top_k: np.ndarray, poison_local: int,
 # Entrypoint
 # ---------------------------------------------------------------------------
 
-def main(bundles_dir: str, out_dir: str, skip: tuple[str, ...] = ()) -> None:
+def main(bundles_dir: str, out_dir: str, skip: tuple[str, ...] = (),
+         figC_query: str | None = None) -> None:
     bd = Path(bundles_dir)
     od = Path(out_dir)
     od.mkdir(parents=True, exist_ok=True)
@@ -788,6 +806,7 @@ def main(bundles_dir: str, out_dir: str, skip: tuple[str, ...] = ()) -> None:
             str(bd / "biopsy" / "figC_cross_model.npz"),
             str(bd / "biopsy" / "figC_cross_model.json"),
             str(od / "core_cross_model_citations.pdf"),
+            preferred_query=figC_query,
         )
 
     if "D" not in skip:
@@ -807,5 +826,13 @@ if __name__ == "__main__":
                     help="Where to write the four PDFs.")
     ap.add_argument("--skip", default="",
                     help="Comma-separated list of figures to skip (A, B, C, D).")
+    ap.add_argument("--figC-query", default="Can biopsy make cancer metastasize?",
+                    help="Preferred query for Figure C's representative panel. "
+                         "Falls back to the first viable shared query if the "
+                         "preferred one isn't in the bundle.")
     args = ap.parse_args()
-    main(args.bundles_dir, args.out_dir, tuple(s.strip().upper() for s in args.skip.split(",") if s.strip()))
+    main(
+        args.bundles_dir, args.out_dir,
+        tuple(s.strip().upper() for s in args.skip.split(",") if s.strip()),
+        figC_query=args.figC_query,
+    )

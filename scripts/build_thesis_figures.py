@@ -306,6 +306,174 @@ def figure_A(bundle_path: str, out_pdf: str,
 
 
 # ---------------------------------------------------------------------------
+# Figure A (3-D) — interactive plotly version
+# ---------------------------------------------------------------------------
+
+def figure_A_3d(bundle_path: str, out_html: str,
+                cap_quantile: float = 0.95) -> None:
+    """Interactive 3-D version of Figure A as a plotly HTML.
+
+    Designed so you can rotate to find the angle that best communicates
+    the geometric relationships.  Corpus, queries, centroids, u_hat,
+    x_tilde, x_raw, x_hat, and an approximate cap boundary (sampled as
+    a scattered cloud on the 2-D great-circle slice through the
+    (u_hat, x_tilde) plane) are all rendered.
+    """
+    import plotly.graph_objects as go
+
+    data = np.load(bundle_path, allow_pickle=True)
+    Q = data["query_embeddings"].astype(np.float32)
+    D = data["doc_embeddings"].astype(np.float32)
+    centroids = data["centroids"].astype(np.float32)
+    u_hat = data["u_hat"].astype(np.float32)
+    x_tilde = data["x_tilde"].astype(np.float32)
+    x_raw = data["x_raw"].astype(np.float32)
+    x_hat = data["x_hat"].astype(np.float32)
+    gamma = float(data["gamma_star"])
+    print(f"  figA 3-D: fitting CORE 3-component on biopsy corpus...")
+    core = CORE(n_components=3, n_iter=400, weight="retrieval").fit(
+        queries=Q, corpus=D,
+    )
+
+    centroid_xyz = core.transform(centroids)
+    if centroid_xyz.ndim == 1:
+        centroid_xyz = centroid_xyz[None, :]
+    u_xyz = core.transform(u_hat)
+    xt_xyz = core.transform(x_tilde)
+    xr_xyz = core.transform(x_raw)
+    xh_xyz = core.transform(x_hat)
+    q_xyz = core.query_embedding_
+
+    # Cap boundary sampled on the 2-D slice through (u_hat, x_tilde).
+    v = x_tilde - np.dot(x_tilde, u_hat) * u_hat
+    v = v / (np.linalg.norm(v) + 1e-12)
+    w = np.random.default_rng(7).standard_normal(u_hat.shape[0])
+    w = w - np.dot(w, u_hat) * u_hat - np.dot(w, v) * v
+    w = w / (np.linalg.norm(w) + 1e-12)
+    theta = np.linspace(0, 2 * np.pi, 200)
+    cg, sg = np.cos(gamma), np.sin(gamma)
+    boundary_768 = (
+        cg * u_hat[None, :]
+        + sg * (np.cos(theta)[:, None] * v[None, :]
+                + np.sin(theta)[:, None] * w[None, :])
+    )
+    boundary_768 = _l2(boundary_768.astype(np.float32))
+    cap_xyz = core.transform(boundary_768)
+
+    doc_idx = _subsample(core.corpus_embedding_, n=3000)
+
+    fig = go.Figure()
+
+    # Corpus.
+    fig.add_trace(go.Scatter3d(
+        x=core.corpus_embedding_[doc_idx, 0],
+        y=core.corpus_embedding_[doc_idx, 1],
+        z=core.corpus_embedding_[doc_idx, 2],
+        mode="markers",
+        marker=dict(size=1.8, color=COLOUR_CORPUS, opacity=0.35),
+        name="Shadow corpus", hoverinfo="skip",
+    ))
+
+    # Queries.
+    fig.add_trace(go.Scatter3d(
+        x=q_xyz[:, 0], y=q_xyz[:, 1], z=q_xyz[:, 2],
+        mode="markers",
+        marker=dict(size=3.5, color=COLOUR_QUERY, opacity=0.75),
+        name=f"Queries (n={Q.shape[0]})",
+    ))
+
+    # Cap boundary cloud.
+    fig.add_trace(go.Scatter3d(
+        x=cap_xyz[:, 0], y=cap_xyz[:, 1], z=cap_xyz[:, 2],
+        mode="lines",
+        line=dict(color=COLOUR_CAP, dash="dash", width=2),
+        name="Cap boundary (illustrative)",
+        hoverinfo="skip",
+    ))
+
+    # Cluster centroid.
+    fig.add_trace(go.Scatter3d(
+        x=centroid_xyz[:, 0], y=centroid_xyz[:, 1], z=centroid_xyz[:, 2],
+        mode="markers",
+        marker=dict(size=7, color=COLOUR_CENTROID, symbol="diamond",
+                    line=dict(width=1.2, color="white")),
+        name=r"Cluster centroid μₖ",
+    ))
+
+    # Interpolation axis (x_tilde → x_raw → u_hat) as a line.
+    fig.add_trace(go.Scatter3d(
+        x=[xt_xyz[0], xr_xyz[0], u_xyz[0]],
+        y=[xt_xyz[1], xr_xyz[1], u_xyz[1]],
+        z=[xt_xyz[2], xr_xyz[2], u_xyz[2]],
+        mode="lines",
+        line=dict(color="#888888", width=2),
+        name="Interpolation axis",
+        hoverinfo="skip",
+    ))
+
+    # u_hat endpoint.
+    fig.add_trace(go.Scatter3d(
+        x=[u_xyz[0]], y=[u_xyz[1]], z=[u_xyz[2]],
+        mode="markers",
+        marker=dict(size=7, color=COLOUR_U_HAT,
+                    line=dict(width=1, color="white")),
+        name="Spectral direction û",
+    ))
+
+    # x_tilde.
+    fig.add_trace(go.Scatter3d(
+        x=[xt_xyz[0]], y=[xt_xyz[1]], z=[xt_xyz[2]],
+        mode="markers",
+        marker=dict(size=8, color=COLOUR_X_TILDE, symbol="square",
+                    line=dict(width=1.0, color="white")),
+        name="Geometric median x̃",
+    ))
+
+    # x_raw hollow-style (open marker).
+    fig.add_trace(go.Scatter3d(
+        x=[xr_xyz[0]], y=[xr_xyz[1]], z=[xr_xyz[2]],
+        mode="markers",
+        marker=dict(size=11, color="white", symbol="diamond-open",
+                    line=dict(width=2, color=COLOUR_X_RAW)),
+        name="Raw target x̂_raw",
+    ))
+
+    # x_hat filled.
+    fig.add_trace(go.Scatter3d(
+        x=[xh_xyz[0]], y=[xh_xyz[1]], z=[xh_xyz[2]],
+        mode="markers",
+        marker=dict(size=10, color=COLOUR_X_HAT, symbol="diamond",
+                    line=dict(width=1.2, color="white")),
+        name="Final target x̂",
+    ))
+
+    # Dotted line x_raw → x_hat.
+    fig.add_trace(go.Scatter3d(
+        x=[xr_xyz[0], xh_xyz[0]],
+        y=[xr_xyz[1], xh_xyz[1]],
+        z=[xr_xyz[2], xh_xyz[2]],
+        mode="lines",
+        line=dict(color="#555555", dash="dot", width=2),
+        showlegend=False, hoverinfo="skip",
+    ))
+
+    fig.update_layout(
+        scene=dict(
+            xaxis_title="CORE 1", yaxis_title="CORE 2", zaxis_title="CORE 3",
+            aspectmode="data",
+        ),
+        margin=dict(l=0, r=0, t=30, b=0),
+        width=1000, height=720,
+        legend=dict(x=0.01, y=0.99, font=dict(size=10)),
+        title=dict(text="Figure A — Phase 1 target construction (3-D, rotate to find an angle)",
+                   font=dict(size=12)),
+    )
+
+    fig.write_html(out_html)
+    print(f"  saved {out_html}")
+
+
+# ---------------------------------------------------------------------------
 # Figure B — Phase 2 convergence trajectory (shares CORE fit with A)
 # ---------------------------------------------------------------------------
 
@@ -432,6 +600,128 @@ def figure_B(bundle_path: str, out_pdf: str, core: CORE) -> None:
         plt.close(fig)
 
     print(f"  saved {out_pdf}")
+
+
+# ---------------------------------------------------------------------------
+# Figure B (3-D) — interactive plotly version
+# ---------------------------------------------------------------------------
+
+def figure_B_3d(bundle_path: str, out_html: str) -> None:
+    """Interactive 3-D version of Figure B as a plotly HTML.
+
+    Trajectory stays coloured by refinement stage so rotating the scene
+    reveals structure that the 2-D landscape panel compresses.
+    """
+    import plotly.graph_objects as go
+
+    data = np.load(bundle_path, allow_pickle=True)
+    Q = data["query_embeddings"].astype(np.float32)
+    D = data["doc_embeddings"].astype(np.float32)
+    T = data["trajectory_embeddings"].astype(np.float32)
+    stages = data["stages"]
+    iters = np.asarray(data["iterations"]).astype(int)
+    cos_to_target = np.asarray(data["cosine_similarities"]).astype(float)
+    x_hat = data["x_hat"].astype(np.float32)
+
+    print(f"  figB 3-D: fitting CORE 3-component on biopsy corpus...")
+    core = CORE(n_components=3, n_iter=400, weight="retrieval").fit(
+        queries=Q, corpus=D,
+    )
+    T_xyz = core.transform(T)
+    xh_xyz = core.transform(x_hat)
+    q_xyz = core.query_embedding_
+    doc_idx = _subsample(core.corpus_embedding_, n=3000)
+
+    fig = go.Figure()
+
+    fig.add_trace(go.Scatter3d(
+        x=core.corpus_embedding_[doc_idx, 0],
+        y=core.corpus_embedding_[doc_idx, 1],
+        z=core.corpus_embedding_[doc_idx, 2],
+        mode="markers",
+        marker=dict(size=1.6, color=COLOUR_CORPUS, opacity=0.22),
+        name="Shadow corpus", hoverinfo="skip",
+    ))
+
+    fig.add_trace(go.Scatter3d(
+        x=q_xyz[:, 0], y=q_xyz[:, 1], z=q_xyz[:, 2],
+        mode="markers",
+        marker=dict(size=3.5, color=COLOUR_QUERY, opacity=0.6),
+        name=f"Queries (n={Q.shape[0]})",
+    ))
+
+    # Trajectory path.
+    fig.add_trace(go.Scatter3d(
+        x=T_xyz[:, 0], y=T_xyz[:, 1], z=T_xyz[:, 2],
+        mode="lines",
+        line=dict(color="rgba(120,120,120,0.6)", width=2),
+        name="Trajectory path", hoverinfo="skip",
+        showlegend=False,
+    ))
+
+    # Stage-coloured markers with hover showing iteration and cos(x_hat).
+    for stage, colour in STAGE_PALETTE.items():
+        mask = np.array([str(s) == stage for s in stages])
+        if mask.sum() == 0:
+            continue
+        fig.add_trace(go.Scatter3d(
+            x=T_xyz[mask, 0], y=T_xyz[mask, 1], z=T_xyz[mask, 2],
+            mode="markers",
+            marker=dict(size=4, color=colour,
+                        line=dict(width=0.5, color="white")),
+            name=f"{stage}  ({int(mask.sum())})",
+            customdata=np.stack([iters[mask], cos_to_target[mask]], axis=1),
+            hovertemplate="iter %{customdata[0]:.0f}<br>cos(x̂)=%{customdata[1]:.3f}<extra></extra>",
+        ))
+
+    # Start & end markers.
+    fig.add_trace(go.Scatter3d(
+        x=[T_xyz[0, 0]], y=[T_xyz[0, 1]], z=[T_xyz[0, 2]],
+        mode="markers+text",
+        marker=dict(size=9, color="white",
+                    line=dict(width=2, color=STAGE_PALETTE.get(str(stages[0]), "#222"))),
+        text=["iter 0"], textposition="top center", textfont=dict(size=11),
+        name="Start (iter 0)", showlegend=False,
+        hovertemplate="iter 0<extra></extra>",
+    ))
+    fig.add_trace(go.Scatter3d(
+        x=[T_xyz[-1, 0]], y=[T_xyz[-1, 1]], z=[T_xyz[-1, 2]],
+        mode="markers+text",
+        marker=dict(size=10,
+                    color=STAGE_PALETTE.get(str(stages[-1]), "#222"),
+                    line=dict(width=1, color="white")),
+        text=[f"iter {int(iters[-1])}"],
+        textposition="top center", textfont=dict(size=11),
+        name=f"End (iter {int(iters[-1])})", showlegend=False,
+        hovertemplate=f"iter {int(iters[-1])}<br>cos(x̂)={cos_to_target[-1]:.3f}<extra></extra>",
+    ))
+
+    # Target.
+    fig.add_trace(go.Scatter3d(
+        x=[xh_xyz[0]], y=[xh_xyz[1]], z=[xh_xyz[2]],
+        mode="markers+text",
+        marker=dict(size=11, color=COLOUR_X_HAT, symbol="diamond",
+                    line=dict(width=1.2, color="white")),
+        text=["x̂"], textposition="top center", textfont=dict(size=12),
+        name="Target x̂",
+    ))
+
+    fig.update_layout(
+        scene=dict(
+            xaxis_title="CORE 1", yaxis_title="CORE 2", zaxis_title="CORE 3",
+            aspectmode="data",
+        ),
+        margin=dict(l=0, r=0, t=30, b=0),
+        width=1000, height=720,
+        legend=dict(x=0.01, y=0.99, font=dict(size=10)),
+        title=dict(
+            text=f"Figure B — Phase 2 trajectory (3-D). cos(traj[-1], x̂) = {cos_to_target[-1]:.3f}",
+            font=dict(size=12),
+        ),
+    )
+
+    fig.write_html(out_html)
+    print(f"  saved {out_html}")
 
 
 # ---------------------------------------------------------------------------
@@ -784,12 +1074,16 @@ def main(bundles_dir: str, out_dir: str, skip: tuple[str, ...] = (),
             str(bd / "biopsy" / "figA_phase1_target.npz"),
             str(od / "core_phase1_target.pdf"),
         )
+        print("\n[A-3D] Phase 1 target construction (interactive)")
+        figure_A_3d(
+            str(bd / "biopsy" / "figA_phase1_target.npz"),
+            str(od / "core_phase1_target_3d.html"),
+        )
     else:
         core_ab = None
 
     if "B" not in skip:
         if core_ab is None:
-            # If A was skipped, re-fit from figB's bundle (it has its own queries+docs).
             bB = np.load(str(bd / "biopsy" / "figB_phase2_trajectory.npz"), allow_pickle=True)
             core_ab = _core_fit(bB["query_embeddings"].astype(np.float32),
                                 bB["doc_embeddings"].astype(np.float32), n_components=2)
@@ -798,6 +1092,11 @@ def main(bundles_dir: str, out_dir: str, skip: tuple[str, ...] = (),
             str(bd / "biopsy" / "figB_phase2_trajectory.npz"),
             str(od / "core_phase2_trajectory.pdf"),
             core=core_ab,
+        )
+        print("\n[B-3D] Phase 2 trajectory (interactive)")
+        figure_B_3d(
+            str(bd / "biopsy" / "figB_phase2_trajectory.npz"),
+            str(od / "core_phase2_trajectory_3d.html"),
         )
 
     if "C" not in skip:

@@ -728,6 +728,16 @@ def figure_B_3d(bundle_path: str, out_html: str) -> None:
 # Figure C — Cross-model retrieval landscape
 # ---------------------------------------------------------------------------
 
+def _harm_colour(score: float, vmin: float = 3.0, vmax: float = 10.0) -> str:
+    """Map an aggregate_harm score to a colour from cool (low) to warm (high)."""
+    import matplotlib as mpl
+    import matplotlib.colors as mcol
+    t = (score - vmin) / max(1e-6, vmax - vmin)
+    t = float(np.clip(t, 0.0, 1.0))
+    cmap = mpl.colormaps["RdYlBu_r"]
+    return mcol.to_hex(cmap(t))
+
+
 def figure_C(npz_path: str, json_path: str, out_pdf: str,
              preferred_query: str | None = None) -> None:
     z = np.load(npz_path, allow_pickle=True)
@@ -777,74 +787,149 @@ def figure_C(npz_path: str, json_path: str, out_pdf: str,
     query, entries = chosen
     print(f"  figC: representative query = \"{query}\"")
 
-    # Single CORE fit shared across all panels.
-    print("  fitting CORE 2-D on biopsy eval corpus (shared across panels)...")
-    # Include the poison in the corpus so the landscape treats it consistently.
+    # Since every LLM produces the same top-5, retrieval geometry is
+    # rendered once.  The figure splits the horizontal space: the left
+    # third shows the shared CORE landscape; the right two-thirds show
+    # stacked per-LLM response cards ordered by aggregate harm score.
+    print("  fitting CORE 2-D on biopsy eval corpus (shared across all LLMs)...")
     corpus_with_poison = np.concatenate([D, poison_emb[None, :]], axis=0)
     core = _core_fit(Q, corpus_with_poison, n_components=2)
 
-    doc_xy = core.corpus_embedding_        # includes the poison at index poison_idx
+    doc_xy = core.corpus_embedding_
     q_xy = core.query_embedding_
-    poison_xy = doc_xy[poison_idx]
+
+    pretty = {"gpt": "GPT", "claude": "Claude",
+              "grok": "Grok", "gemini": "Gemini"}
+
+    # Order the LLMs by per-query aggregate harm (ascending = most resistant first).
+    llm_order = sorted(
+        llms,
+        key=lambda l: entries[l]["petri_scores"].get("aggregate_harm", 0.0),
+    )
+    harm_scores = {l: float(entries[l]["petri_scores"].get("aggregate_harm", 0.0))
+                   for l in llm_order}
+
+    # One canonical top-5 — any LLM's is fine since they're identical.
+    top5 = list(entries[llm_order[0]]["top_k_indices"])
 
     with _style_ctx():
-        fig, axes = plt.subplots(1, n_llms, figsize=(6 * n_llms, 6), sharex=True, sharey=True)
-        if n_llms == 1:
-            axes = [axes]
+        fig = plt.figure(figsize=(16, 10))
+        gs = fig.add_gridspec(
+            nrows=n_llms, ncols=2,
+            width_ratios=[1.15, 1.0],
+            hspace=0.22, wspace=0.06,
+            left=0.05, right=0.98, top=0.88, bottom=0.055,
+        )
 
-        bg_idx = _subsample(doc_xy, n=2000)
-        excerpt_wrap = 90
+        # -------- Left column: shared CORE panel (spans all rows) --------
+        ax_left = fig.add_subplot(gs[:, 0])
+        bg_idx = _subsample(doc_xy, n=2500)
+        ax_left.scatter(doc_xy[bg_idx, 0], doc_xy[bg_idx, 1], s=2.4,
+                        c=COLOUR_CORPUS, alpha=0.4, rasterized=True, zorder=1)
+        ax_left.scatter(q_xy[:, 0], q_xy[:, 1], s=16, c=COLOUR_QUERY,
+                        alpha=0.6, edgecolors="none", zorder=2,
+                        label=f"Queries (n={Q.shape[0]})")
 
-        for ax, llm in zip(axes, llms):
+        for rank, idx in enumerate(top5, start=1):
+            if idx >= doc_xy.shape[0]:
+                continue
+            is_poison = (idx == poison_idx)
+            ax_left.scatter([doc_xy[idx, 0]], [doc_xy[idx, 1]],
+                            s=260 if is_poison else 90,
+                            marker="*" if is_poison else "s",
+                            c=COLOUR_POISON if is_poison else COLOUR_TOPK,
+                            edgecolors="white",
+                            linewidths=1.1 if is_poison else 0.5,
+                            zorder=9 if is_poison else 6)
+            if is_poison:
+                ax_left.annotate(f"{rank}",
+                                 (doc_xy[idx, 0], doc_xy[idx, 1]),
+                                 fontsize=10, fontweight="bold",
+                                 color=COLOUR_POISON,
+                                 xytext=(10, 10), textcoords="offset points",
+                                 zorder=11)
+            else:
+                ax_left.annotate(f"{rank}",
+                                 (doc_xy[idx, 0], doc_xy[idx, 1]),
+                                 fontsize=8, color="white",
+                                 ha="center", va="center", zorder=7)
+
+        # Zoom to just the interesting region.
+        keep = np.array([i for i in top5 if i < doc_xy.shape[0]])
+        focal = np.vstack([q_xy, doc_xy[keep]])
+        _autoscale(ax_left, focal, pad_frac=0.5)
+        ax_left.set_aspect("equal", adjustable="box")
+        ax_left.set_title("Shared retrieval landscape\n"
+                          "(identical across all four LLMs)",
+                          fontsize=11, pad=10)
+        _style_axis(ax_left)
+        ax_left.legend(fontsize=8, loc="lower left", frameon=False)
+
+        # -------- Right column: one response card per LLM --------
+        for row, llm in enumerate(llm_order):
             e = entries[llm]
-            top5 = list(e["top_k_indices"])
-            ax.scatter(doc_xy[bg_idx, 0], doc_xy[bg_idx, 1], s=2,
-                       c=COLOUR_CORPUS, alpha=0.35, rasterized=True, zorder=1)
-            ax.scatter(q_xy[:, 0], q_xy[:, 1], s=14, c=COLOUR_QUERY,
-                       alpha=0.55, edgecolors="none", zorder=2)
+            harm = harm_scores[llm]
+            colour = _harm_colour(harm)
 
-            # Top-5 retrieved.
-            for rank, idx in enumerate(top5, start=1):
-                if idx >= doc_xy.shape[0]:
-                    continue
-                is_poison = (idx == poison_idx)
-                ax.scatter([doc_xy[idx, 0]], [doc_xy[idx, 1]],
-                           s=200 if is_poison else 70,
-                           marker="*" if is_poison else "s",
-                           c=COLOUR_POISON if is_poison else COLOUR_TOPK,
-                           edgecolors="white",
-                           linewidths=1.0 if is_poison else 0.4,
-                           zorder=8 if is_poison else 6)
-                if is_poison:
-                    # Offset the "1" label so it's legible next to the red star.
-                    ax.annotate(f"{rank}",
-                                (doc_xy[idx, 0], doc_xy[idx, 1]),
-                                fontsize=8, fontweight="bold",
-                                color=COLOUR_POISON,
-                                xytext=(8, 8), textcoords="offset points",
-                                zorder=10)
-                else:
-                    ax.annotate(f"{rank}",
-                                (doc_xy[idx, 0], doc_xy[idx, 1]),
-                                fontsize=7, color="white",
-                                ha="center", va="center", zorder=7)
+            ax = fig.add_subplot(gs[row, 1])
+            ax.set_xlim(0, 1)
+            ax.set_ylim(0, 1)
+            ax.axis("off")
 
-            # Pretty-print model names: preserve initialisms.
-            pretty = {"gpt": "GPT", "claude": "Claude",
-                      "grok": "Grok", "gemini": "Gemini"}.get(llm, llm.capitalize())
-            ax.set_title(pretty, fontsize=11, pad=8)
-            ax.set_aspect("equal", adjustable="box")
-            _style_axis(ax)
+            # Tinted background strip encoding harm visually.
+            ax.add_patch(mpatches.FancyBboxPatch(
+                (0.00, 0.02), 1.00, 0.96,
+                boxstyle="round,pad=0.008,rounding_size=0.015",
+                transform=ax.transAxes, linewidth=0.6,
+                edgecolor="#999999", facecolor=colour + "22",
+                zorder=0,
+            ))
 
-            # Response excerpt below the panel.
-            resp = e["response_with_poison"].replace("\n", " ")
-            # Cut at first "breath" punctuation after ~200 chars for readability.
-            head = resp[:220].rsplit(". ", 1)[0] + "."
-            ax.text(0.5, -0.16, textwrap.fill(head, width=excerpt_wrap),
-                    transform=ax.transAxes, ha="center", va="top", fontsize=7,
-                    color="#333333", style="italic")
+            # Left ribbon: solid colour band (harm intensity).
+            ax.add_patch(mpatches.FancyBboxPatch(
+                (0.00, 0.02), 0.015, 0.96,
+                boxstyle="round,pad=0,rounding_size=0.005",
+                transform=ax.transAxes, linewidth=0,
+                facecolor=colour, zorder=1,
+            ))
 
-        # Global legend.
+            # LLM name + harm score.
+            ax.text(0.03, 0.82, pretty.get(llm, llm.capitalize()),
+                    transform=ax.transAxes, fontsize=13, fontweight="bold",
+                    color="#222222", va="center")
+            ax.text(0.98, 0.82,
+                    f"aggregate harm  {harm:.2f} / 10",
+                    transform=ax.transAxes, fontsize=9,
+                    color="#444444", va="center", ha="right",
+                    family="monospace")
+
+            # Horizontal meter bar (0 → 10).
+            bar_y = 0.60
+            ax.plot([0.03, 0.97], [bar_y, bar_y], color="#CCCCCC",
+                    linewidth=6, solid_capstyle="round", zorder=2,
+                    transform=ax.transAxes)
+            fill_frac = float(np.clip(harm / 10.0, 0.0, 1.0))
+            ax.plot([0.03, 0.03 + 0.94 * fill_frac], [bar_y, bar_y],
+                    color=colour, linewidth=6, solid_capstyle="round",
+                    zorder=3, transform=ax.transAxes)
+
+            # Response excerpt (clipped to a human-readable length).
+            resp = e["response_with_poison"].replace("\n", " ").strip()
+            clip = 330
+            head = resp[:clip]
+            if len(resp) > clip:
+                head = head.rsplit(" ", 1)[0] + "…"
+            ax.text(0.03, 0.42,
+                    textwrap.fill(head, width=84),
+                    transform=ax.transAxes, fontsize=9,
+                    color="#222222", va="top", style="italic")
+
+        # Figure-level title + legend.
+        fig.suptitle(
+            f'Cross-model response divergence on the same retrieval  —  '
+            f'Query: "{query}"',
+            fontsize=12, y=0.96,
+        )
         handles = [
             mpatches.Patch(facecolor=COLOUR_CORPUS, edgecolor="none",
                            label="Shadow corpus"),
@@ -853,15 +938,13 @@ def figure_C(npz_path: str, json_path: str, out_pdf: str,
             plt.Line2D([0], [0], marker="s", linestyle="none",
                        color=COLOUR_TOPK, markersize=6, label="Retrieved top-5"),
             plt.Line2D([0], [0], marker="*", linestyle="none",
-                       color=COLOUR_POISON, markersize=11, label="Poison"),
+                       color=COLOUR_POISON, markersize=11, label="Poison (rank 1)"),
         ]
-        fig.legend(handles=handles, loc="upper center", fontsize=8,
+        fig.legend(handles=handles, loc="upper left", fontsize=9,
                    frameon=False, ncol=len(handles),
-                   bbox_to_anchor=(0.5, 1.03))
+                   bbox_to_anchor=(0.05, 0.92))
 
-        fig.suptitle(f'Query: "{query}"', fontsize=10, y=1.05)
-        fig.subplots_adjust(top=0.85, bottom=0.22)
-        fig.savefig(out_pdf, dpi=300, bbox_inches="tight")
+        fig.savefig(out_pdf, dpi=300)
         plt.close(fig)
 
     print(f"  saved {out_pdf}")

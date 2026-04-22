@@ -109,7 +109,7 @@ production / thesis figures on unseen data, **start with 2-D**.
 Reproduce with:
 
 ```bash
-python scripts/heldout_split.py
+python scripts/heldout_split.py --data-root /path/to/per-domain/folders
 ```
 
 ### UMAP hyperparameter sensitivity
@@ -488,22 +488,25 @@ python scripts/make_benchmark_figure.py \
 ```
 
 **Main benchmark on planning corpora** (uses `trajectory.npz` directly,
-no extra reproduction step needed):
+no extra reproduction step needed; `--data-root` should point at a
+directory of per-domain folders `C{N}_*/trajectory.npz`):
 
 ```bash
-python scripts/benchmark_all_domains.py
+python scripts/benchmark_all_domains.py --data-root /path/to/per-domain/folders
 ```
 
 **Held-out generalisation** (on planning corpora — see Caveats for why):
 
 ```bash
-python scripts/heldout_split.py
+python scripts/heldout_split.py --data-root /path/to/per-domain/folders
 ```
 
 **UMAP hyperparameter sensitivity** (both corpus modes supported):
 
 ```bash
 python scripts/umap_sensitivity.py --eval-corpora-dir /path/to/eval/corpora
+# or, planning mode:
+python scripts/umap_sensitivity.py --data-root /path/to/per-domain/folders
 ```
 
 The benchmark measures **top-10 overlap** — for each query, the fraction

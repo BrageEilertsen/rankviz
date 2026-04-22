@@ -24,9 +24,8 @@ warnings.filterwarnings("ignore")
 
 from rankviz import CORE
 
-BASE = "/Users/brageeilertsen/trajectory_data"
-OUT_DEFAULT = os.path.join(BASE, "rankviz", "examples", "heldout_results.csv")
-OUT_EVAL    = os.path.join(BASE, "rankviz", "examples", "heldout_results_eval.csv")
+OUT_DEFAULT = os.path.join("examples", "heldout_results.csv")
+OUT_EVAL    = os.path.join("examples", "heldout_results_eval.csv")
 
 TEST_FRAC = 0.2
 SEED = 42
@@ -78,7 +77,7 @@ def top_k_test(Q_test, C, Q_test_low, C_low, k=10):
     ]))
 
 
-def _resolve_sources(eval_corpora_dir: str | None):
+def _resolve_sources(eval_corpora_dir: str | None, data_root: str | None):
     """Yield (domain_label, Q, C) pairs for every available source."""
     if eval_corpora_dir is not None:
         for path in sorted(glob.glob(os.path.join(eval_corpora_dir, "eval_corpus_C*.npz"))):
@@ -92,12 +91,18 @@ def _resolve_sources(eval_corpora_dir: str | None):
                 data["doc_embeddings"].astype(np.float32),
             )
         return
+    if data_root is None:
+        raise SystemExit(
+            "Planning mode requires --data-root pointing at a directory of "
+            "C{N}_*/trajectory.npz folders. Use --eval-corpora-dir to skip "
+            "the planning step."
+        )
     doms = sorted(
-        d for d in os.listdir(BASE)
-        if d.startswith("C") and "_" in d and os.path.isdir(os.path.join(BASE, d))
+        d for d in os.listdir(data_root)
+        if d.startswith("C") and "_" in d and os.path.isdir(os.path.join(data_root, d))
     )
     for dom in doms:
-        npz = os.path.join(BASE, dom, "trajectory.npz")
+        npz = os.path.join(data_root, dom, "trajectory.npz")
         if not os.path.exists(npz):
             continue
         data = np.load(npz, allow_pickle=True)
@@ -108,14 +113,14 @@ def _resolve_sources(eval_corpora_dir: str | None):
         )
 
 
-def main(eval_corpora_dir: str | None, out: str):
+def main(eval_corpora_dir: str | None, data_root: str | None, out: str):
     rng = np.random.default_rng(SEED)
     results = []
 
     mode = f"eval corpora ({eval_corpora_dir})" if eval_corpora_dir else "planning (trajectory.npz)"
     print(f"[START] held-out split: test fraction {TEST_FRAC}, source = {mode}", flush=True)
 
-    for dom, Q, C in _resolve_sources(eval_corpora_dir):
+    for dom, Q, C in _resolve_sources(eval_corpora_dir, data_root):
 
         n = Q.shape[0]
         perm = rng.permutation(n)
@@ -187,8 +192,22 @@ def main(eval_corpora_dir: str | None, out: str):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--eval-corpora-dir", default=None)
-    ap.add_argument("--out", default=None)
+    ap.add_argument(
+        "--eval-corpora-dir", default=None,
+        help="Directory containing eval_corpus_C*.npz files (built by "
+             "scripts/build_eval_corpus.py). If unset, use planning "
+             "trajectory.npz files (requires --data-root).",
+    )
+    ap.add_argument(
+        "--data-root", default=None,
+        help="Root directory of per-domain folders C{N}_*/ each containing "
+             "trajectory.npz. Required for planning mode.",
+    )
+    ap.add_argument(
+        "--out", default=None,
+        help=f"CSV output path. Defaults (relative to cwd): "
+             f"{OUT_DEFAULT} (planning mode) or {OUT_EVAL} (eval-corpora mode).",
+    )
     args = ap.parse_args()
     out = args.out or (OUT_EVAL if args.eval_corpora_dir else OUT_DEFAULT)
-    main(args.eval_corpora_dir, out)
+    main(args.eval_corpora_dir, args.data_root, out)

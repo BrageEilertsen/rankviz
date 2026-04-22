@@ -41,7 +41,6 @@ plotly = [
 ]
 dev = [
     "pytest>=7.0",
-    "pytest-mpl>=0.16",
     "plotly>=5.0",
 ]
 

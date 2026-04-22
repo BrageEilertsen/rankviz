@@ -22,9 +22,8 @@ import numpy as np
 warnings.filterwarnings("ignore")
 
 
-BASE = "/Users/brageeilertsen/trajectory_data"
-OUT_DEFAULT = os.path.join(BASE, "rankviz", "examples", "umap_sensitivity.csv")
-OUT_EVAL    = os.path.join(BASE, "rankviz", "examples", "umap_sensitivity_eval.csv")
+OUT_DEFAULT = os.path.join("examples", "umap_sensitivity.csv")
+OUT_EVAL    = os.path.join("examples", "umap_sensitivity_eval.csv")
 
 N_NEIGHBORS = [5, 15, 30, 50]
 MIN_DISTS   = [0.0, 0.1, 0.5]
@@ -41,7 +40,7 @@ def top_k_overlap(Q, D, Q_low, D_low, k=10):
     ]))
 
 
-def _load(dom: str, eval_corpora_dir: str | None):
+def _load(dom: str, eval_corpora_dir: str | None, data_root: str | None):
     if eval_corpora_dir is not None:
         # Match "eval_corpus_C4_chemo.npz" or similar.
         matches = sorted(glob.glob(
@@ -59,7 +58,13 @@ def _load(dom: str, eval_corpora_dir: str | None):
             data["query_embeddings"].astype(np.float32),
             data["doc_embeddings"].astype(np.float32),
         )
-    npz = os.path.join(BASE, dom, "trajectory.npz")
+    if data_root is None:
+        raise SystemExit(
+            "Planning mode requires --data-root pointing at a directory of "
+            "C{N}_*/trajectory.npz folders. Use --eval-corpora-dir to skip "
+            "the planning step."
+        )
+    npz = os.path.join(data_root, dom, "trajectory.npz")
     if not os.path.exists(npz):
         return None
     data = np.load(npz, allow_pickle=True)
@@ -69,7 +74,7 @@ def _load(dom: str, eval_corpora_dir: str | None):
     )
 
 
-def main(eval_corpora_dir: str | None, out: str):
+def main(eval_corpora_dir: str | None, data_root: str | None, out: str):
     from umap import UMAP
 
     rows = []
@@ -77,7 +82,7 @@ def main(eval_corpora_dir: str | None, out: str):
     print(f"[START] UMAP sweep — {mode}", flush=True)
 
     for dom in DOMAINS:
-        pair = _load(dom, eval_corpora_dir)
+        pair = _load(dom, eval_corpora_dir, data_root)
         if pair is None:
             print(f"  [SKIP] {dom}", flush=True)
             continue
@@ -128,8 +133,22 @@ def main(eval_corpora_dir: str | None, out: str):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--eval-corpora-dir", default=None)
-    ap.add_argument("--out", default=None)
+    ap.add_argument(
+        "--eval-corpora-dir", default=None,
+        help="Directory containing eval_corpus_C*.npz files (built by "
+             "scripts/build_eval_corpus.py). If unset, use planning "
+             "trajectory.npz files (requires --data-root).",
+    )
+    ap.add_argument(
+        "--data-root", default=None,
+        help="Root directory of per-domain folders C{N}_*/ each containing "
+             "trajectory.npz. Required for planning mode.",
+    )
+    ap.add_argument(
+        "--out", default=None,
+        help=f"CSV output path. Defaults (relative to cwd): "
+             f"{OUT_DEFAULT} (planning mode) or {OUT_EVAL} (eval-corpora mode).",
+    )
     args = ap.parse_args()
     out = args.out or (OUT_EVAL if args.eval_corpora_dir else OUT_DEFAULT)
-    main(args.eval_corpora_dir, out)
+    main(args.eval_corpora_dir, args.data_root, out)

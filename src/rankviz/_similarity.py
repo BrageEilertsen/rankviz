@@ -82,7 +82,6 @@ def cosine_similarity_matrix(
             f"planned for a future release.",
             stacklevel=2,
         )
-    # TODO: add chunked path for large matrices (post-defence).
     return queries @ documents.T
 
 

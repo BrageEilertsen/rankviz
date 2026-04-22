@@ -29,9 +29,8 @@ warnings.filterwarnings("ignore")
 
 from rankviz import CORE
 
-BASE = "/Users/brageeilertsen/trajectory_data"
-OUT_CSV_DEFAULT = os.path.join(BASE, "rankviz", "examples", "benchmark_results.csv")
-OUT_CSV_EVAL    = os.path.join(BASE, "rankviz", "examples", "benchmark_results_eval.csv")
+OUT_CSV_DEFAULT = os.path.join("examples", "benchmark_results.csv")
+OUT_CSV_EVAL    = os.path.join("examples", "benchmark_results_eval.csv")
 
 
 def top_k_overlap(Q, D, Q_low, D_low, k=10):
@@ -68,8 +67,10 @@ def tsne_project(Q, D, k=3):
     return low[:Q.shape[0]], low[Q.shape[0]:]
 
 
-def get_eval_rate(dom):
-    eval_dir = os.path.join(BASE, dom, "eval")
+def get_eval_rate(dom, data_root):
+    if data_root is None:
+        return None
+    eval_dir = os.path.join(data_root, dom, "eval")
     if not os.path.isdir(eval_dir):
         return None
     rates = []
@@ -84,7 +85,7 @@ def get_eval_rate(dom):
     return float(np.mean(rates)) if rates else None
 
 
-def _resolve_domain_sources(eval_corpora_dir: str | None):
+def _resolve_domain_sources(eval_corpora_dir: str | None, data_root: str | None):
     """Yield (domain_label, Q, D, cos_target, eval_rate) triples."""
     if eval_corpora_dir is not None:
         pattern = os.path.join(eval_corpora_dir, "eval_corpus_C*.npz")
@@ -97,33 +98,40 @@ def _resolve_domain_sources(eval_corpora_dir: str | None):
             Q = data["query_embeddings"].astype(np.float32)
             D = data["doc_embeddings"].astype(np.float32)
             # Pull cos(target) from the companion planning trajectory.npz when
-            # it's there; otherwise leave it blank.
-            traj_npz = os.path.join(BASE, dom, "trajectory.npz")
+            # data_root is provided and the file is there; otherwise leave blank.
             cos_final = None
-            if os.path.exists(traj_npz):
-                t = np.load(traj_npz, allow_pickle=True)
-                if "cosine_similarities" in t.files:
-                    cos_final = float(t["cosine_similarities"][-1])
-            yield dom, Q, D, cos_final, get_eval_rate(dom)
+            if data_root is not None:
+                traj_npz = os.path.join(data_root, dom, "trajectory.npz")
+                if os.path.exists(traj_npz):
+                    t = np.load(traj_npz, allow_pickle=True)
+                    if "cosine_similarities" in t.files:
+                        cos_final = float(t["cosine_similarities"][-1])
+            yield dom, Q, D, cos_final, get_eval_rate(dom, data_root)
         return
 
     # Default: read planning-phase trajectory.npz files.
+    if data_root is None:
+        raise SystemExit(
+            "Planning mode requires --data-root pointing at a directory of "
+            "C{N}_*/trajectory.npz folders. Use --eval-corpora-dir to skip "
+            "the planning step."
+        )
     domains = sorted(
-        d for d in os.listdir(BASE)
-        if d.startswith("C") and "_" in d and os.path.isdir(os.path.join(BASE, d))
+        d for d in os.listdir(data_root)
+        if d.startswith("C") and "_" in d and os.path.isdir(os.path.join(data_root, d))
     )
     for dom in domains:
-        npz_path = os.path.join(BASE, dom, "trajectory.npz")
+        npz_path = os.path.join(data_root, dom, "trajectory.npz")
         if not os.path.exists(npz_path):
             continue
         data = np.load(npz_path, allow_pickle=True)
         Q = data["query_embeddings"].astype(np.float32)
         D = data["shadow_doc_embeddings"].astype(np.float32)
         cos_final = float(data["cosine_similarities"][-1])
-        yield dom, Q, D, cos_final, get_eval_rate(dom)
+        yield dom, Q, D, cos_final, get_eval_rate(dom, data_root)
 
 
-def main(eval_corpora_dir: str | None, out_csv: str):
+def main(eval_corpora_dir: str | None, data_root: str | None, out_csv: str):
     print(
         f"[START] corpus source: "
         f"{'eval corpora in ' + eval_corpora_dir if eval_corpora_dir else 'planning (trajectory.npz)'}",
@@ -131,7 +139,7 @@ def main(eval_corpora_dir: str | None, out_csv: str):
     )
 
     results = []
-    for dom, Q, D, cos_final, eval_rate in _resolve_domain_sources(eval_corpora_dir):
+    for dom, Q, D, cos_final, eval_rate in _resolve_domain_sources(eval_corpora_dir, data_root):
         print(f"\n[DOMAIN] {dom}  Q={Q.shape[0]} D={D.shape[0]} "
               f"cos(target)={cos_final} eval_retr={eval_rate}", flush=True)
 
@@ -215,13 +223,21 @@ if __name__ == "__main__":
         "--eval-corpora-dir", default=None,
         help="Directory containing eval_corpus_C*.npz files (built by "
              "scripts/build_eval_corpus.py). If unset, use planning "
-             "trajectory.npz files.",
+             "trajectory.npz files (requires --data-root).",
+    )
+    ap.add_argument(
+        "--data-root", default=None,
+        help="Root directory of per-domain folders C{N}_*/ each containing "
+             "trajectory.npz. Required for planning mode; optional in "
+             "eval-corpora mode (used to look up cos(target) and eval "
+             "retrieval rate when present).",
     )
     ap.add_argument(
         "--out", default=None,
-        help=f"CSV output path. Defaults: {OUT_CSV_DEFAULT} (planning mode) "
-             f"or {OUT_CSV_EVAL} (eval-corpora mode).",
+        help=f"CSV output path. Defaults (relative to cwd): "
+             f"{OUT_CSV_DEFAULT} (planning mode) or {OUT_CSV_EVAL} "
+             f"(eval-corpora mode).",
     )
     args = ap.parse_args()
     out = args.out or (OUT_CSV_EVAL if args.eval_corpora_dir else OUT_CSV_DEFAULT)
-    main(args.eval_corpora_dir, out)
+    main(args.eval_corpora_dir, args.data_root, out)

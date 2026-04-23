@@ -11,11 +11,14 @@ returns.
 
 `rankviz` fills that gap.
 
-It was developed for the author's master's thesis at the University of
-Oslo / Simula Research Laboratory on retrieval-aware visualisation for
-dense-retrieval systems, but is packaged as a general-purpose
-dimensionality-reduction library — nothing in the API or examples
-depends on the thesis's research artefacts.
+It started as a side-quest from the author's master's thesis at the
+University of Oslo / Simula Research Laboratory: a need to show,
+honestly, whether a particular document had landed next to the
+documents a query actually retrieves — a question off-the-shelf
+reducers can't answer without distorting the geometry that drives
+retrieval. CORE was built to answer it. The package ships as a
+general-purpose dimensionality-reduction library — nothing in the API
+or examples depends on the thesis's research artefacts.
 
 ---
 

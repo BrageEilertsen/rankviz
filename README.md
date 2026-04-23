@@ -248,7 +248,7 @@ symmetrically.
 #### Optimisation
 
 1. **Initialise** $X, Y$ from the top-$k$ right singular vectors of the
-   stacked matrix $\begin{bmatrix} Q \\ C \end{bmatrix}$ (PCA-style
+   stacked matrix $\begin{bmatrix} Q \\\\ C \end{bmatrix}$ (PCA-style
    start), rescaled so initial inter-point distances sit near the
    target range.
 

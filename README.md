@@ -247,7 +247,7 @@ symmetrically.
 
 #### Optimisation
 
-1. **Initialise** $X, Y$ from the top-$k$ right singular vectors of
+1. **Initialise** $X, Y$ from the top $k$ right singular vectors of
    the matrix formed by stacking $Q$ above $C$ row-wise (PCA-style
    start), rescaled so initial inter-point distances sit near the
    target range.
